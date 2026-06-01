@@ -55,22 +55,24 @@ static constexpr int64_t STATA_TC_EPOCH_OFFSET_MS = 3653LL * 24 * 60 * 60 * 1000
 
 static bool IsDateFormat(const string &fmt) {
 	// %td, %d, %-td, %-d
-	if (fmt.empty()) return false;
+	if (fmt.empty())
+		return false;
 	string lower = fmt;
-	for (auto &c : lower) c = tolower(c);
+	for (auto &c : lower)
+		c = tolower(c);
 	return lower.find("%td") != string::npos || lower.find("%d") != string::npos;
 }
 
 static bool IsDatetimeFormat(const string &fmt) {
 	// %tc, %tC
-	if (fmt.empty()) return false;
+	if (fmt.empty())
+		return false;
 	return fmt.find("%tc") != string::npos || fmt.find("%tC") != string::npos;
 }
 
 // ─── Type mapping ───────────────────────────────────────────────────────────
 
-static LogicalType MapDtaType(const dta::DtaColumn &col, bool apply_value_labels,
-                              const dta::DtaValueLabel *vl) {
+static LogicalType MapDtaType(const dta::DtaColumn &col, bool apply_value_labels, const dta::DtaValueLabel *vl) {
 	uint16_t tc = col.type_code;
 
 	// String types
@@ -97,11 +99,15 @@ static LogicalType MapDtaType(const dta::DtaColumn &col, bool apply_value_labels
 
 	// Numeric types
 	switch (tc) {
-	case 65530: return LogicalType::TINYINT;   // byte
-	case 65529: return LogicalType::SMALLINT;   // int
-	case 65528: return LogicalType::INTEGER;    // long
-	case 65527: return LogicalType::FLOAT;      // float
-	case 65526: { // double
+	case 65530:
+		return LogicalType::TINYINT; // byte
+	case 65529:
+		return LogicalType::SMALLINT; // int
+	case 65528:
+		return LogicalType::INTEGER; // long
+	case 65527:
+		return LogicalType::FLOAT; // float
+	case 65526: {                  // double
 		if (IsDateFormat(col.format)) {
 			return LogicalType::DATE;
 		}

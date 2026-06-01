@@ -54,8 +54,8 @@ static constexpr int32_t STATA_EPOCH_OFFSET = 3653;
 static constexpr int64_t STATA_TC_EPOCH_OFFSET_MS = 3653LL * 24 * 60 * 60 * 1000;
 
 // Missing value sentinels (LSF byte order)
-static constexpr int8_t MISSING_BYTE = 101;    // 0x65
-static constexpr int16_t MISSING_INT = 32741;  // 0x7fe5
+static constexpr int8_t MISSING_BYTE = 101;         // 0x65
+static constexpr int16_t MISSING_INT = 32741;       // 0x7fe5
 static constexpr int32_t MISSING_LONG = 2147483621; // 0x7fffffe5
 
 static double MissingDouble() {
@@ -129,7 +129,7 @@ static dta::DtaWriteColumn MapDuckDBType(const string &name, const LogicalType &
 		break;
 	case LogicalTypeId::VARCHAR:
 		col.type_code = 32768; // strL
-		col.byte_width = 8;   // (v, o) reference
+		col.byte_width = 8;    // (v, o) reference
 		col.format = "%9s";
 		break;
 	case LogicalTypeId::ENUM: {
@@ -244,13 +244,37 @@ static void WriteDtaSink(ExecutionContext &context, FunctionData &bind_data, Glo
 			if (FlatVector::IsNull(vec, row)) {
 				// Write missing value sentinel
 				switch (col_def.type_code) {
-				case 65530: { int8_t mv = MISSING_BYTE; memcpy(dest, &mv, 1); break; }
-				case 65529: { int16_t mv = MISSING_INT; memcpy(dest, &mv, 2); break; }
-				case 65528: { int32_t mv = MISSING_LONG; memcpy(dest, &mv, 4); break; }
-				case 65527: { float mv = MissingFloat(); memcpy(dest, &mv, 4); break; }
-				case 65526: { double mv = MissingDouble(); memcpy(dest, &mv, 8); break; }
-				case 32768: { memset(dest, 0, 8); break; } // strL: (0,0) = NULL
-				default: break;
+				case 65530: {
+					int8_t mv = MISSING_BYTE;
+					memcpy(dest, &mv, 1);
+					break;
+				}
+				case 65529: {
+					int16_t mv = MISSING_INT;
+					memcpy(dest, &mv, 2);
+					break;
+				}
+				case 65528: {
+					int32_t mv = MISSING_LONG;
+					memcpy(dest, &mv, 4);
+					break;
+				}
+				case 65527: {
+					float mv = MissingFloat();
+					memcpy(dest, &mv, 4);
+					break;
+				}
+				case 65526: {
+					double mv = MissingDouble();
+					memcpy(dest, &mv, 8);
+					break;
+				}
+				case 32768: {
+					memset(dest, 0, 8);
+					break;
+				} // strL: (0,0) = NULL
+				default:
+					break;
 				}
 			} else {
 				auto val_type = vec.GetType().id();
@@ -272,7 +296,8 @@ static void WriteDtaSink(ExecutionContext &context, FunctionData &bind_data, Glo
 					} else if (val_type == LogicalTypeId::TINYINT) {
 						val = FlatVector::GetData<int8_t>(vec)[row];
 					} else {
-						val = static_cast<int8_t>(vec.GetValue(row).CastAs(context.client, LogicalType::TINYINT).GetValue<int8_t>());
+						val = static_cast<int8_t>(
+						    vec.GetValue(row).CastAs(context.client, LogicalType::TINYINT).GetValue<int8_t>());
 					}
 					memcpy(dest, &val, 1);
 					break;

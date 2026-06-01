@@ -15,11 +15,13 @@ OUT_DIR = os.path.join(os.path.dirname(__file__), "data")
 # ============================================================
 # Common test data: 3 rows with int, string, double columns
 # ============================================================
-df = pd.DataFrame({
-    "id": pd.array([1, 2, 3], dtype="int32"),
-    "name": ["Alice", "Bob", "Charlie"],
-    "score": [95.5, 87.3, 91.0],
-})
+df = pd.DataFrame(
+    {
+        "id": pd.array([1, 2, 3], dtype="int32"),
+        "name": ["Alice", "Bob", "Charlie"],
+        "score": [95.5, 87.3, 91.0],
+    }
+)
 
 
 def generate_pandas_formats():
@@ -84,7 +86,7 @@ def write_dta_binary(path, version, rows, columns):
         return len(buf)
 
     def w_str(s, length):
-        b = s.encode("utf-8")[:length - 1]
+        b = s.encode("utf-8")[: length - 1]
         buf.extend(b)
         buf.extend(b"\x00" * (length - len(b)))
 
@@ -225,9 +227,9 @@ def write_dta_binary(path, version, rows, columns):
 def generate_binary_formats():
     """Generate format versions 120 and 121 manually."""
     columns = [
-        ("id", 65528, 4, "%12.0g"),   # long
-        ("name", 7, 7, "%7s"),         # str7 (fixed width)
-        ("score", 65526, 8, "%10.0g"), # double
+        ("id", 65528, 4, "%12.0g"),  # long
+        ("name", 7, 7, "%7s"),  # str7 (fixed width)
+        ("score", 65526, 8, "%10.0g"),  # double
     ]
 
     rows_data = [
@@ -253,18 +255,24 @@ def generate_binary_formats():
 
 def generate_value_labels_file():
     """Generate a .dta file with value labels using pandas."""
-    df_labels = pd.DataFrame({
-        "gender": pd.Categorical([1, 2, 1, 2, 1], categories=[1, 2]),
-        "region": pd.Categorical([1, 1, 2, 3, 3], categories=[1, 2, 3]),
-    })
+    df_labels = pd.DataFrame(
+        {
+            "gender": pd.Categorical([1, 2, 1, 2, 1], categories=[1, 2]),
+            "region": pd.Categorical([1, 1, 2, 3, 3], categories=[1, 2, 3]),
+        }
+    )
     # Convert to int for Stata
-    df_out = pd.DataFrame({
-        "gender": df_labels["gender"].cat.codes.astype("int8") + 1,
-        "region": df_labels["region"].cat.codes.astype("int8") + 1,
-    })
+    df_out = pd.DataFrame(
+        {
+            "gender": df_labels["gender"].cat.codes.astype("int8") + 1,
+            "region": df_labels["region"].cat.codes.astype("int8") + 1,
+        }
+    )
     path = os.path.join(OUT_DIR, "value_labels.dta")
     writer = pd.io.stata.StataWriter117(
-        path, df_out, write_index=False,
+        path,
+        df_out,
+        write_index=False,
         value_labels={
             "gender": {1: "Male", 2: "Female"},
             "region": {1: "North", 2: "South", 3: "East"},

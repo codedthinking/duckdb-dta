@@ -9,12 +9,12 @@
 namespace dta {
 
 struct DtaWriteColumn {
-	std::string name;              // max 32 UTF-8 chars (129 bytes)
-	uint16_t type_code;            // 1-2045=str, 32768=strL, 65526-65530=numeric
-	uint16_t byte_width;           // bytes per observation
-	std::string format;            // display format (e.g. "%9.0g", "%td")
+	std::string name;    // max 32 UTF-8 chars (129 bytes)
+	uint16_t type_code;  // 1-2045=str, 32768=strL, 65526-65530=numeric
+	uint16_t byte_width; // bytes per observation
+	std::string format;  // display format (e.g. "%9.0g", "%td")
 	std::string value_label_name;
-	std::string label;             // variable label
+	std::string label; // variable label
 };
 
 struct WriterValueLabel {
@@ -23,8 +23,8 @@ struct WriterValueLabel {
 };
 
 struct StrLEntry {
-	uint32_t v;   // 1-based variable index
-	uint64_t o;   // 1-based observation index
+	uint32_t v; // 1-based variable index
+	uint64_t o; // 1-based observation index
 	std::string value;
 };
 
@@ -49,7 +49,9 @@ public:
 	// Close the data section and write strls, value labels, map, footer
 	void Finalize(uint64_t total_obs);
 
-	uint32_t RowWidth() const { return row_width_; }
+	uint32_t RowWidth() const {
+		return row_width_;
+	}
 
 private:
 	FILE *fp_;

@@ -114,13 +114,20 @@ uint16_t DtaTypeByteWidth(uint16_t type_code) {
 		return type_code; // str# has width = #
 	}
 	switch (type_code) {
-	case 32768: return 8;  // strL: 8-byte (v,o) reference
-	case 65525: return 0;  // alias: no data
-	case 65526: return 8;  // double
-	case 65527: return 4;  // float
-	case 65528: return 4;  // long
-	case 65529: return 2;  // int
-	case 65530: return 1;  // byte
+	case 32768:
+		return 8; // strL: 8-byte (v,o) reference
+	case 65525:
+		return 0; // alias: no data
+	case 65526:
+		return 8; // double
+	case 65527:
+		return 4; // float
+	case 65528:
+		return 4; // long
+	case 65529:
+		return 2; // int
+	case 65530:
+		return 1; // byte
 	default:
 		throw std::runtime_error("Unknown .dta type code: " + std::to_string(type_code));
 	}
@@ -255,8 +262,7 @@ void DtaReader::ReadTag(const char *expected) {
 // ─── Constructor ────────────────────────────────────────────────────────────
 
 DtaReader::DtaReader(const std::string &path)
-    : fp_(nullptr), msf_(false), n_obs_(0), row_width_(0), data_offset_(0), strls_offset_(0),
-      value_labels_offset_(0) {
+    : fp_(nullptr), msf_(false), n_obs_(0), row_width_(0), data_offset_(0), strls_offset_(0), value_labels_offset_(0) {
 	fp_ = fopen(path.c_str(), "rb");
 	if (!fp_) {
 		throw std::runtime_error("Cannot open .dta file: " + path);
