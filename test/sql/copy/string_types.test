@@ -1,0 +1,162 @@
+# name: test/sql/copy/string_types.test
+# description: string edge cases for dta roundtrip
+# group: [copy]
+
+require dta
+
+# ============================================================
+# Basic string roundtrip
+# ============================================================
+
+statement ok
+COPY (SELECT 'hello world' AS s) TO '__TEST_DIR__/str_basic.dta' (FORMAT dta)
+
+query I
+SELECT * FROM read_dta('__TEST_DIR__/str_basic.dta')
+----
+hello world
+
+# ============================================================
+# Single character
+# ============================================================
+
+statement ok
+COPY (SELECT 'a' AS s) TO '__TEST_DIR__/str_single.dta' (FORMAT dta)
+
+query I
+SELECT * FROM read_dta('__TEST_DIR__/str_single.dta')
+----
+a
+
+# ============================================================
+# Empty string
+# Note: empty strL writes (0,0) reference which reads as NULL
+# This is a known limitation
+# ============================================================
+
+statement ok
+COPY (SELECT '' AS s) TO '__TEST_DIR__/str_empty.dta' (FORMAT dta)
+
+query I
+SELECT s IS NULL FROM read_dta('__TEST_DIR__/str_empty.dta')
+----
+true
+
+# ============================================================
+# Long string (> 2045 chars, uses strL)
+# ============================================================
+
+statement ok
+COPY (SELECT repeat('x', 3000) AS s) TO '__TEST_DIR__/str_long.dta' (FORMAT dta)
+
+query I
+SELECT length(s) FROM read_dta('__TEST_DIR__/str_long.dta')
+----
+3000
+
+query I
+SELECT s = repeat('x', 3000) FROM read_dta('__TEST_DIR__/str_long.dta')
+----
+true
+
+# ============================================================
+# Unicode: accented characters
+# ============================================================
+
+statement ok
+COPY (SELECT 'café' AS s) TO '__TEST_DIR__/str_accent.dta' (FORMAT dta)
+
+query I
+SELECT * FROM read_dta('__TEST_DIR__/str_accent.dta')
+----
+café
+
+# ============================================================
+# Unicode: CJK characters
+# ============================================================
+
+statement ok
+COPY (SELECT '日本語テスト' AS s) TO '__TEST_DIR__/str_cjk.dta' (FORMAT dta)
+
+query I
+SELECT * FROM read_dta('__TEST_DIR__/str_cjk.dta')
+----
+日本語テスト
+
+# ============================================================
+# Unicode: emoji
+# ============================================================
+
+statement ok
+COPY (SELECT '🦆 DuckDB' AS s) TO '__TEST_DIR__/str_emoji.dta' (FORMAT dta)
+
+query I
+SELECT * FROM read_dta('__TEST_DIR__/str_emoji.dta')
+----
+🦆 DuckDB
+
+# ============================================================
+# String with special characters: newline, tab
+# ============================================================
+
+statement ok
+COPY (SELECT E'line1\nline2' AS s) TO '__TEST_DIR__/str_newline.dta' (FORMAT dta)
+
+query I
+SELECT s LIKE '%line1%' AND s LIKE '%line2%' FROM read_dta('__TEST_DIR__/str_newline.dta')
+----
+true
+
+statement ok
+COPY (SELECT E'col1\tcol2' AS s) TO '__TEST_DIR__/str_tab.dta' (FORMAT dta)
+
+query I
+SELECT length(s) FROM read_dta('__TEST_DIR__/str_tab.dta')
+----
+9
+
+# ============================================================
+# Strings with trailing spaces
+# ============================================================
+
+statement ok
+COPY (SELECT 'hello   ' AS s) TO '__TEST_DIR__/str_trailing.dta' (FORMAT dta)
+
+# strL preserves trailing spaces
+query I
+SELECT length(s) FROM read_dta('__TEST_DIR__/str_trailing.dta')
+----
+8
+
+query I
+SELECT s = 'hello   ' FROM read_dta('__TEST_DIR__/str_trailing.dta')
+----
+true
+
+# ============================================================
+# Multiple string columns
+# ============================================================
+
+statement ok
+COPY (SELECT 'short' AS a, 'a much longer string for testing' AS b, 'café 日本語 🦆' AS c) TO '__TEST_DIR__/str_multi.dta' (FORMAT dta)
+
+query III
+SELECT * FROM read_dta('__TEST_DIR__/str_multi.dta')
+----
+short	a much longer string for testing	café 日本語 🦆
+
+# ============================================================
+# NULL strings mixed with values
+# ============================================================
+
+statement ok
+COPY (
+    SELECT * FROM (VALUES ('hello'), (NULL), ('world')) AS t(s)
+) TO '__TEST_DIR__/str_null_mixed.dta' (FORMAT dta)
+
+query I
+SELECT * FROM read_dta('__TEST_DIR__/str_null_mixed.dta')
+----
+hello
+NULL
+world

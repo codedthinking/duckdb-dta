@@ -1,0 +1,149 @@
+# name: test/sql/copy/numeric_boundaries.test
+# description: boundary values for Stata numeric types
+# group: [copy]
+
+require dta
+
+# ============================================================
+# TINYINT/byte boundaries: valid range -127 to 100
+# ============================================================
+
+statement ok
+COPY (SELECT (-127)::TINYINT AS mn, 100::TINYINT AS mx, 0::TINYINT AS zero) TO '__TEST_DIR__/byte_bounds.dta' (FORMAT dta)
+
+query III
+SELECT * FROM read_dta('__TEST_DIR__/byte_bounds.dta')
+----
+-127	100	0
+
+# 101 is the missing sentinel for byte — TINYINT can hold 101 but it becomes NULL in Stata
+statement ok
+COPY (SELECT 101::SMALLINT AS sentinel) TO '__TEST_DIR__/byte_sentinel.dta' (FORMAT dta)
+
+# ============================================================
+# SMALLINT/int boundaries: valid range -32767 to 32740
+# ============================================================
+
+statement ok
+COPY (SELECT (-32767)::SMALLINT AS mn, 32740::SMALLINT AS mx, 0::SMALLINT AS zero) TO '__TEST_DIR__/int_bounds.dta' (FORMAT dta)
+
+query III
+SELECT * FROM read_dta('__TEST_DIR__/int_bounds.dta')
+----
+-32767	32740	0
+
+# ============================================================
+# INTEGER/long boundaries: valid range -2147483647 to 2147483620
+# ============================================================
+
+statement ok
+COPY (SELECT (-2147483647)::INTEGER AS mn, 2147483620::INTEGER AS mx, 0::INTEGER AS zero) TO '__TEST_DIR__/long_bounds.dta' (FORMAT dta)
+
+query III
+SELECT * FROM read_dta('__TEST_DIR__/long_bounds.dta')
+----
+-2147483647	2147483620	0
+
+# Value at the sentinel boundary: 2147483621 is the Stata missing long sentinel
+# Writing this as INTEGER and reading back should give NULL
+statement ok
+COPY (SELECT 2147483621::INTEGER AS at_sentinel) TO '__TEST_DIR__/long_sentinel.dta' (FORMAT dta)
+
+query I
+SELECT at_sentinel IS NULL FROM read_dta('__TEST_DIR__/long_sentinel.dta')
+----
+true
+
+# ============================================================
+# DOUBLE boundary values
+# ============================================================
+
+statement ok
+COPY (
+    SELECT 1e-300::DOUBLE AS tiny_pos,
+           (-1e-300)::DOUBLE AS tiny_neg,
+           1e+300::DOUBLE AS huge_pos,
+           (-1e+300)::DOUBLE AS huge_neg,
+           0.0::DOUBLE AS zero
+) TO '__TEST_DIR__/double_bounds.dta' (FORMAT dta)
+
+query RRRRR
+SELECT * FROM read_dta('__TEST_DIR__/double_bounds.dta')
+----
+1e-300	-1e-300	1e+300	-1e+300	0.0
+
+# ============================================================
+# BIGINT -> double precision edge cases
+# ============================================================
+
+# 2^53 = 9007199254740992 is the largest integer exactly representable as double
+statement ok
+COPY (SELECT 9007199254740992::BIGINT AS max_exact) TO '__TEST_DIR__/bigint_exact.dta' (FORMAT dta)
+
+query R
+SELECT * FROM read_dta('__TEST_DIR__/bigint_exact.dta')
+----
+9007199254740992.0
+
+# 2^53 + 1 loses precision when cast to double
+statement ok
+COPY (SELECT 9007199254740993::BIGINT AS loses_precision) TO '__TEST_DIR__/bigint_lossy.dta' (FORMAT dta)
+
+# The value may not roundtrip exactly — it becomes 9007199254740992.0
+query R
+SELECT * FROM read_dta('__TEST_DIR__/bigint_lossy.dta')
+----
+9007199254740992.0
+
+# ============================================================
+# Negative BIGINT
+# ============================================================
+
+statement ok
+COPY (SELECT (-9007199254740992)::BIGINT AS neg_max_exact) TO '__TEST_DIR__/bigint_neg.dta' (FORMAT dta)
+
+query R
+SELECT * FROM read_dta('__TEST_DIR__/bigint_neg.dta')
+----
+-9007199254740992.0
+
+# ============================================================
+# FLOAT boundary values
+# ============================================================
+
+statement ok
+COPY (
+    SELECT 1e-30::FLOAT AS tiny,
+           1e+30::FLOAT AS huge,
+           0.0::FLOAT AS zero,
+           (-1e+30)::FLOAT AS neg_huge
+) TO '__TEST_DIR__/float_bounds.dta' (FORMAT dta)
+
+query I
+SELECT count(*) FROM read_dta('__TEST_DIR__/float_bounds.dta') WHERE tiny IS NOT NULL AND huge IS NOT NULL AND zero IS NOT NULL AND neg_huge IS NOT NULL
+----
+1
+
+# ============================================================
+# Zero values for all integer types
+# ============================================================
+
+statement ok
+COPY (SELECT 0::TINYINT AS a, 0::SMALLINT AS b, 0::INTEGER AS c, 0::BIGINT AS d) TO '__TEST_DIR__/zeros.dta' (FORMAT dta)
+
+query IIIR
+SELECT * FROM read_dta('__TEST_DIR__/zeros.dta')
+----
+0	0	0	0.0
+
+# ============================================================
+# Negative one for all integer types
+# ============================================================
+
+statement ok
+COPY (SELECT (-1)::TINYINT AS a, (-1)::SMALLINT AS b, (-1)::INTEGER AS c, (-1)::BIGINT AS d) TO '__TEST_DIR__/neg_ones.dta' (FORMAT dta)
+
+query IIIR
+SELECT * FROM read_dta('__TEST_DIR__/neg_ones.dta')
+----
+-1	-1	-1	-1.0

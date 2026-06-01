@@ -1,0 +1,191 @@
+# name: test/sql/copy/temporal_types.test
+# description: date and timestamp edge cases for dta roundtrip
+# group: [copy]
+
+require dta
+
+# ============================================================
+# DATE: Stata epoch (1960-01-01 = day 0)
+# ============================================================
+
+statement ok
+COPY (SELECT DATE '1960-01-01' AS dt) TO '__TEST_DIR__/date_epoch.dta' (FORMAT dta)
+
+query T
+SELECT * FROM read_dta('__TEST_DIR__/date_epoch.dta')
+----
+1960-01-01
+
+# ============================================================
+# DATE: day before epoch (negative Stata day)
+# ============================================================
+
+statement ok
+COPY (SELECT DATE '1959-12-31' AS dt) TO '__TEST_DIR__/date_before_epoch.dta' (FORMAT dta)
+
+query T
+SELECT * FROM read_dta('__TEST_DIR__/date_before_epoch.dta')
+----
+1959-12-31
+
+# ============================================================
+# DATE: Unix epoch
+# ============================================================
+
+statement ok
+COPY (SELECT DATE '1970-01-01' AS dt) TO '__TEST_DIR__/date_unix.dta' (FORMAT dta)
+
+query T
+SELECT * FROM read_dta('__TEST_DIR__/date_unix.dta')
+----
+1970-01-01
+
+# ============================================================
+# DATE: various dates
+# ============================================================
+
+statement ok
+COPY (
+    SELECT * FROM (VALUES
+        (DATE '2000-06-15'),
+        (DATE '1900-01-01'),
+        (DATE '2099-12-31'),
+        (DATE '1960-06-15')
+    ) AS t(dt)
+) TO '__TEST_DIR__/date_various.dta' (FORMAT dta)
+
+query T
+SELECT * FROM read_dta('__TEST_DIR__/date_various.dta')
+----
+2000-06-15
+1900-01-01
+2099-12-31
+1960-06-15
+
+# ============================================================
+# DATE: NULL date mixed with values
+# ============================================================
+
+statement ok
+COPY (
+    SELECT * FROM (VALUES
+        (DATE '2024-01-01'),
+        (NULL),
+        (DATE '1960-01-01')
+    ) AS t(dt)
+) TO '__TEST_DIR__/date_null_mixed.dta' (FORMAT dta)
+
+query T
+SELECT * FROM read_dta('__TEST_DIR__/date_null_mixed.dta')
+----
+2024-01-01
+NULL
+1960-01-01
+
+# ============================================================
+# TIMESTAMP: Stata epoch (1960-01-01 00:00:00 = ms 0)
+# ============================================================
+
+statement ok
+COPY (SELECT TIMESTAMP '1960-01-01 00:00:00' AS ts) TO '__TEST_DIR__/ts_epoch.dta' (FORMAT dta)
+
+query T
+SELECT * FROM read_dta('__TEST_DIR__/ts_epoch.dta')
+----
+1960-01-01 00:00:00
+
+# ============================================================
+# TIMESTAMP: before epoch
+# ============================================================
+
+statement ok
+COPY (SELECT TIMESTAMP '1959-12-31 23:59:59' AS ts) TO '__TEST_DIR__/ts_before_epoch.dta' (FORMAT dta)
+
+query T
+SELECT * FROM read_dta('__TEST_DIR__/ts_before_epoch.dta')
+----
+1959-12-31 23:59:59
+
+# ============================================================
+# TIMESTAMP: millisecond precision
+# Stata %tc stores milliseconds, DuckDB stores microseconds
+# So millisecond-level precision should survive roundtrip
+# ============================================================
+
+statement ok
+COPY (SELECT TIMESTAMP '2024-06-15 12:30:45.123' AS ts) TO '__TEST_DIR__/ts_millis.dta' (FORMAT dta)
+
+query T
+SELECT * FROM read_dta('__TEST_DIR__/ts_millis.dta')
+----
+2024-06-15 12:30:45.123
+
+# ============================================================
+# TIMESTAMP: microsecond precision is truncated to milliseconds
+# ============================================================
+
+statement ok
+COPY (SELECT TIMESTAMP '2024-06-15 12:30:45.123456' AS ts) TO '__TEST_DIR__/ts_micros.dta' (FORMAT dta)
+
+# Microseconds are lost (truncated to milliseconds)
+query T
+SELECT * FROM read_dta('__TEST_DIR__/ts_micros.dta')
+----
+2024-06-15 12:30:45.123
+
+# ============================================================
+# TIMESTAMP: midnight and end-of-day
+# ============================================================
+
+statement ok
+COPY (
+    SELECT * FROM (VALUES
+        (TIMESTAMP '2024-01-01 00:00:00'),
+        (TIMESTAMP '2024-01-01 23:59:59')
+    ) AS t(ts)
+) TO '__TEST_DIR__/ts_day_bounds.dta' (FORMAT dta)
+
+query T
+SELECT * FROM read_dta('__TEST_DIR__/ts_day_bounds.dta')
+----
+2024-01-01 00:00:00
+2024-01-01 23:59:59
+
+# ============================================================
+# TIMESTAMP: NULL mixed with values
+# ============================================================
+
+statement ok
+COPY (
+    SELECT * FROM (VALUES
+        (TIMESTAMP '2024-01-01 12:00:00'),
+        (NULL),
+        (TIMESTAMP '1960-01-01 00:00:00')
+    ) AS t(ts)
+) TO '__TEST_DIR__/ts_null_mixed.dta' (FORMAT dta)
+
+query T
+SELECT * FROM read_dta('__TEST_DIR__/ts_null_mixed.dta')
+----
+2024-01-01 12:00:00
+NULL
+1960-01-01 00:00:00
+
+# ============================================================
+# Multiple temporal columns in one table
+# ============================================================
+
+statement ok
+COPY (
+    SELECT DATE '2024-01-15' AS dt, TIMESTAMP '2024-01-15 10:30:00' AS ts
+) TO '__TEST_DIR__/temporal_multi.dta' (FORMAT dta)
+
+query TT
+SELECT * FROM read_dta('__TEST_DIR__/temporal_multi.dta')
+----
+2024-01-15	2024-01-15 10:30:00
+
+query II
+SELECT typeof(dt), typeof(ts) FROM read_dta('__TEST_DIR__/temporal_multi.dta')
+----
+DATE	TIMESTAMP

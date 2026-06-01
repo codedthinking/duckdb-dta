@@ -1,0 +1,48 @@
+# name: test/sql/copy/variable_labels.test
+# description: variable label handling in dta roundtrip
+# group: [copy]
+
+require dta
+
+# ============================================================
+# Basic write and read back preserves data (labels are metadata)
+# ============================================================
+
+statement ok
+COPY (SELECT 1::INTEGER AS income, 'Alice' AS name, DATE '2024-01-01' AS birth_date) TO '__TEST_DIR__/labels.dta' (FORMAT dta)
+
+# Data should survive roundtrip regardless of labels
+query IIT
+SELECT * FROM read_dta('__TEST_DIR__/labels.dta')
+----
+1	Alice	2024-01-01
+
+# Column names should be preserved
+query III
+SELECT typeof(income), typeof(name), typeof(birth_date) FROM read_dta('__TEST_DIR__/labels.dta')
+----
+INTEGER	VARCHAR	DATE
+
+# ============================================================
+# Round-trip: write, read, write again, read again
+# Variable labels should not cause data corruption
+# ============================================================
+
+statement ok
+CREATE TABLE label_test AS SELECT * FROM read_dta('test/data/auto.dta')
+
+statement ok
+COPY (SELECT * FROM label_test) TO '__TEST_DIR__/labels_rt1.dta' (FORMAT dta)
+
+statement ok
+COPY (SELECT * FROM read_dta('__TEST_DIR__/labels_rt1.dta')) TO '__TEST_DIR__/labels_rt2.dta' (FORMAT dta)
+
+query IIRI
+SELECT * FROM read_dta('__TEST_DIR__/labels_rt2.dta') ORDER BY id
+----
+1	Acme	1000.0	2017
+2	Beta Corp	2500.5	2018
+3	Gamma	NULL	2018
+
+statement ok
+DROP TABLE label_test

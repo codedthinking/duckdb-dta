@@ -1,0 +1,114 @@
+# name: test/sql/read_dta_formats.test
+# description: test reading .dta files in format versions 117-121
+# group: [sql]
+
+require dta
+
+# ============================================================
+# Format 117 (Stata 13)
+# ============================================================
+
+query III
+SELECT typeof(id), typeof(name), typeof(score) FROM read_dta('test/data/format_117.dta') LIMIT 1
+----
+INTEGER	VARCHAR	DOUBLE
+
+query IIR
+SELECT * FROM read_dta('test/data/format_117.dta') ORDER BY id
+----
+1	Alice	95.5
+2	Bob	87.3
+3	Charlie	91.0
+
+# ============================================================
+# Format 118 (Stata 14)
+# ============================================================
+
+query III
+SELECT typeof(id), typeof(name), typeof(score) FROM read_dta('test/data/format_118.dta') LIMIT 1
+----
+INTEGER	VARCHAR	DOUBLE
+
+query IIR
+SELECT * FROM read_dta('test/data/format_118.dta') ORDER BY id
+----
+1	Alice	95.5
+2	Bob	87.3
+3	Charlie	91.0
+
+# ============================================================
+# Format 119 (Stata 15)
+# ============================================================
+
+query III
+SELECT typeof(id), typeof(name), typeof(score) FROM read_dta('test/data/format_119.dta') LIMIT 1
+----
+INTEGER	VARCHAR	DOUBLE
+
+query IIR
+SELECT * FROM read_dta('test/data/format_119.dta') ORDER BY id
+----
+1	Alice	95.5
+2	Bob	87.3
+3	Charlie	91.0
+
+# ============================================================
+# Format 120 (Stata 16, with alias variable support)
+# ============================================================
+
+query III
+SELECT typeof(id), typeof(name), typeof(score) FROM read_dta('test/data/format_120.dta') LIMIT 1
+----
+INTEGER	VARCHAR	DOUBLE
+
+query IIR
+SELECT * FROM read_dta('test/data/format_120.dta') ORDER BY id
+----
+1	Alice	95.5
+2	Bob	87.3
+3	Charlie	91.0
+
+# ============================================================
+# Format 121 (Stata 18)
+# ============================================================
+
+query III
+SELECT typeof(id), typeof(name), typeof(score) FROM read_dta('test/data/format_121.dta') LIMIT 1
+----
+INTEGER	VARCHAR	DOUBLE
+
+query IIR
+SELECT * FROM read_dta('test/data/format_121.dta') ORDER BY id
+----
+1	Alice	95.5
+2	Bob	87.3
+3	Charlie	91.0
+
+# ============================================================
+# All formats produce consistent results
+# ============================================================
+
+query I
+SELECT count(*) FROM read_dta('test/data/format_117.dta')
+----
+3
+
+query I
+SELECT count(*) FROM read_dta('test/data/format_118.dta')
+----
+3
+
+query I
+SELECT count(*) FROM read_dta('test/data/format_119.dta')
+----
+3
+
+query I
+SELECT count(*) FROM read_dta('test/data/format_120.dta')
+----
+3
+
+query I
+SELECT count(*) FROM read_dta('test/data/format_121.dta')
+----
+3

@@ -1,0 +1,75 @@
+# name: test/sql/copy/large_data.test_slow
+# description: scale test with many rows
+# group: [copy]
+
+require dta
+
+# ============================================================
+# 100,000 rows with multiple types
+# ============================================================
+
+statement ok
+COPY (
+    SELECT
+        i::INTEGER AS id,
+        ('name_' || i::VARCHAR) AS name,
+        (i * 1.5)::DOUBLE AS value,
+        (DATE '2020-01-01' + INTERVAL (i) DAY)::DATE AS dt
+    FROM range(100000) t(i)
+) TO '__TEST_DIR__/large.dta' (FORMAT dta)
+
+query I
+SELECT count(*) FROM read_dta('__TEST_DIR__/large.dta')
+----
+100000
+
+query I
+SELECT min(id) FROM read_dta('__TEST_DIR__/large.dta')
+----
+0
+
+query I
+SELECT max(id) FROM read_dta('__TEST_DIR__/large.dta')
+----
+99999
+
+query R
+SELECT sum(value) FROM read_dta('__TEST_DIR__/large.dta')
+----
+7499925000.0
+
+# ============================================================
+# Verify first and last rows
+# ============================================================
+
+query IIRT
+SELECT * FROM read_dta('__TEST_DIR__/large.dta') WHERE id = 0
+----
+0	name_0	0.0	2020-01-01
+
+query IIRT
+SELECT * FROM read_dta('__TEST_DIR__/large.dta') WHERE id = 99999
+----
+99999	name_99999	149998.5	2293-10-15
+
+# ============================================================
+# Large data with NULLs
+# ============================================================
+
+statement ok
+COPY (
+    SELECT
+        i::INTEGER AS id,
+        CASE WHEN i % 3 = 0 THEN NULL ELSE i::DOUBLE END AS value
+    FROM range(10000) t(i)
+) TO '__TEST_DIR__/large_nulls.dta' (FORMAT dta)
+
+query I
+SELECT count(*) FROM read_dta('__TEST_DIR__/large_nulls.dta') WHERE value IS NULL
+----
+3334
+
+query I
+SELECT count(*) FROM read_dta('__TEST_DIR__/large_nulls.dta') WHERE value IS NOT NULL
+----
+6666

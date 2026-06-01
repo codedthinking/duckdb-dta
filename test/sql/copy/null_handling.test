@@ -1,0 +1,151 @@
+# name: test/sql/copy/null_handling.test
+# description: NULL handling for all types in dta roundtrip
+# group: [copy]
+
+require dta
+
+# ============================================================
+# NULL for each numeric type
+# ============================================================
+
+statement ok
+COPY (
+    SELECT * FROM (VALUES
+        (1::TINYINT, 1::SMALLINT, 1::INTEGER, 1::BIGINT, 1.0::FLOAT, 1.0::DOUBLE),
+        (NULL, NULL, NULL, NULL, NULL, NULL)
+    ) AS t(ti, si, i, bi, f, d)
+) TO '__TEST_DIR__/null_numeric.dta' (FORMAT dta)
+
+query IIIIII
+SELECT ti IS NULL, si IS NULL, i IS NULL, bi IS NULL, f IS NULL, d IS NULL
+FROM read_dta('__TEST_DIR__/null_numeric.dta')
+ORDER BY ti NULLS LAST
+----
+false	false	false	false	false	false
+true	true	true	true	true	true
+
+# Verify non-NULL values survived
+query IIIIIR
+SELECT ti, si, i, bi, f, d
+FROM read_dta('__TEST_DIR__/null_numeric.dta')
+WHERE ti IS NOT NULL
+----
+1	1	1	1.0	1.0	1.0
+
+# ============================================================
+# NULL for VARCHAR (strL)
+# ============================================================
+
+statement ok
+COPY (
+    SELECT * FROM (VALUES ('hello'), (NULL)) AS t(s)
+) TO '__TEST_DIR__/null_varchar.dta' (FORMAT dta)
+
+query I
+SELECT s IS NULL FROM read_dta('__TEST_DIR__/null_varchar.dta') ORDER BY s NULLS LAST
+----
+false
+true
+
+query I
+SELECT s FROM read_dta('__TEST_DIR__/null_varchar.dta') WHERE s IS NOT NULL
+----
+hello
+
+# ============================================================
+# NULL for DATE
+# ============================================================
+
+statement ok
+COPY (
+    SELECT * FROM (VALUES (DATE '2024-01-01'), (NULL)) AS t(dt)
+) TO '__TEST_DIR__/null_date.dta' (FORMAT dta)
+
+query I
+SELECT dt IS NULL FROM read_dta('__TEST_DIR__/null_date.dta') ORDER BY dt NULLS LAST
+----
+false
+true
+
+query T
+SELECT dt FROM read_dta('__TEST_DIR__/null_date.dta') WHERE dt IS NOT NULL
+----
+2024-01-01
+
+# ============================================================
+# NULL for TIMESTAMP
+# ============================================================
+
+statement ok
+COPY (
+    SELECT * FROM (VALUES (TIMESTAMP '2024-01-01 12:00:00'), (NULL)) AS t(ts)
+) TO '__TEST_DIR__/null_ts.dta' (FORMAT dta)
+
+query I
+SELECT ts IS NULL FROM read_dta('__TEST_DIR__/null_ts.dta') ORDER BY ts NULLS LAST
+----
+false
+true
+
+query T
+SELECT ts FROM read_dta('__TEST_DIR__/null_ts.dta') WHERE ts IS NOT NULL
+----
+2024-01-01 12:00:00
+
+# ============================================================
+# NULL for BOOLEAN
+# ============================================================
+
+statement ok
+COPY (
+    SELECT * FROM (VALUES (true), (false), (NULL)) AS t(b)
+) TO '__TEST_DIR__/null_bool.dta' (FORMAT dta)
+
+query I
+SELECT count(*) FROM read_dta('__TEST_DIR__/null_bool.dta') WHERE b IS NULL
+----
+1
+
+query I
+SELECT count(*) FROM read_dta('__TEST_DIR__/null_bool.dta') WHERE b IS NOT NULL
+----
+2
+
+# ============================================================
+# All NULLs (entire column is NULL)
+# ============================================================
+
+statement ok
+COPY (
+    SELECT NULL::INTEGER AS a, NULL::VARCHAR AS b, NULL::DOUBLE AS c
+    UNION ALL
+    SELECT NULL::INTEGER, NULL::VARCHAR, NULL::DOUBLE
+) TO '__TEST_DIR__/all_null.dta' (FORMAT dta)
+
+query III
+SELECT a IS NULL, b IS NULL, c IS NULL FROM read_dta('__TEST_DIR__/all_null.dta')
+----
+true	true	true
+true	true	true
+
+# ============================================================
+# Mixed NULL positions
+# ============================================================
+
+statement ok
+COPY (
+    SELECT * FROM (VALUES
+        (1::INTEGER, 'a', 10.0),
+        (NULL, 'b', NULL),
+        (3, NULL, 30.0),
+        (NULL, NULL, NULL)
+    ) AS t(id, name, value)
+) TO '__TEST_DIR__/mixed_nulls.dta' (FORMAT dta)
+
+query ITR
+SELECT * FROM read_dta('__TEST_DIR__/mixed_nulls.dta')
+----
+1	a	10.0
+NULL	b	NULL
+3	NULL	30.0
+NULL	NULL	NULL

@@ -1,0 +1,136 @@
+# name: test/sql/copy/value_labels.test
+# description: ENUM and value label roundtrip in dta format
+# group: [copy]
+
+require dta
+
+# ============================================================
+# Basic ENUM roundtrip
+# ============================================================
+
+statement ok
+CREATE TYPE fruit AS ENUM ('apple', 'banana', 'cherry')
+
+statement ok
+CREATE TABLE fruit_table (f fruit)
+
+statement ok
+INSERT INTO fruit_table VALUES ('apple'), ('banana'), ('cherry'), ('apple')
+
+statement ok
+COPY (SELECT * FROM fruit_table) TO '__TEST_DIR__/enum_basic.dta' (FORMAT dta)
+
+# Without value_labels: reads as TINYINT (0-indexed codes)
+query I
+SELECT typeof(f) FROM read_dta('__TEST_DIR__/enum_basic.dta') LIMIT 1
+----
+TINYINT
+
+# With value_labels: reads as ENUM
+query I
+SELECT typeof(f) FROM read_dta('__TEST_DIR__/enum_basic.dta', value_labels=true) LIMIT 1
+----
+ENUM('apple', 'banana', 'cherry')
+
+query I
+SELECT * FROM read_dta('__TEST_DIR__/enum_basic.dta', value_labels=true) ORDER BY f
+----
+apple
+apple
+banana
+cherry
+
+statement ok
+DROP TABLE fruit_table
+
+statement ok
+DROP TYPE fruit
+
+# ============================================================
+# ENUM with NULL
+# ============================================================
+
+statement ok
+CREATE TYPE size AS ENUM ('S', 'M', 'L', 'XL')
+
+statement ok
+CREATE TABLE size_table (s size)
+
+statement ok
+INSERT INTO size_table VALUES ('S'), (NULL), ('L'), ('XL'), (NULL)
+
+statement ok
+COPY (SELECT * FROM size_table) TO '__TEST_DIR__/enum_null.dta' (FORMAT dta)
+
+query I
+SELECT * FROM read_dta('__TEST_DIR__/enum_null.dta', value_labels=true)
+----
+S
+NULL
+L
+XL
+NULL
+
+query I
+SELECT count(*) FROM read_dta('__TEST_DIR__/enum_null.dta', value_labels=true) WHERE s IS NULL
+----
+2
+
+statement ok
+DROP TABLE size_table
+
+statement ok
+DROP TYPE size
+
+# ============================================================
+# ENUM with many categories (fits in byte: <= 100)
+# ============================================================
+
+statement ok
+CREATE TYPE letter AS ENUM ('a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j',
+    'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z')
+
+statement ok
+COPY (SELECT 'a'::letter AS l UNION ALL SELECT 'z'::letter) TO '__TEST_DIR__/enum_26.dta' (FORMAT dta)
+
+query I
+SELECT * FROM read_dta('__TEST_DIR__/enum_26.dta', value_labels=true) ORDER BY l
+----
+a
+z
+
+statement ok
+DROP TYPE letter
+
+# ============================================================
+# ENUM column alongside other types
+# ============================================================
+
+statement ok
+CREATE TYPE status AS ENUM ('active', 'inactive', 'pending')
+
+statement ok
+COPY (
+    SELECT 1::INTEGER AS id, 'active'::status AS st, 'Alice' AS name
+    UNION ALL
+    SELECT 2, 'pending'::status, 'Bob'
+    UNION ALL
+    SELECT 3, 'inactive'::status, 'Charlie'
+) TO '__TEST_DIR__/enum_mixed.dta' (FORMAT dta)
+
+query ITI
+SELECT id, name, typeof(st) FROM read_dta('__TEST_DIR__/enum_mixed.dta', value_labels=true) ORDER BY id
+----
+1	Alice	ENUM('active', 'inactive', 'pending')
+2	Bob	ENUM('active', 'inactive', 'pending')
+3	Charlie	ENUM('active', 'inactive', 'pending')
+
+query ITT
+SELECT id, st, name FROM read_dta('__TEST_DIR__/enum_mixed.dta', value_labels=true) ORDER BY id
+----
+1	active	Alice
+2	pending	Bob
+3	inactive	Charlie
+
+statement ok
+DROP TYPE status

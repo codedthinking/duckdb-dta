@@ -1,0 +1,314 @@
+# name: test/sql/copy/all_types.test
+# description: roundtrip all DuckDB types through dta format
+# group: [copy]
+
+require dta
+
+# ============================================================
+# BOOLEAN
+# ============================================================
+
+statement ok
+COPY (SELECT true AS a, false AS b) TO '__TEST_DIR__/types_bool.dta' (FORMAT dta)
+
+# BOOLEAN reads back as TINYINT (0/1)
+query II
+SELECT typeof(a), typeof(b) FROM read_dta('__TEST_DIR__/types_bool.dta')
+----
+TINYINT	TINYINT
+
+query II
+SELECT * FROM read_dta('__TEST_DIR__/types_bool.dta')
+----
+1	0
+
+# ============================================================
+# TINYINT
+# ============================================================
+
+statement ok
+COPY (SELECT 1::TINYINT AS a, (-5)::TINYINT AS b) TO '__TEST_DIR__/types_tinyint.dta' (FORMAT dta)
+
+query II
+SELECT typeof(a), typeof(b) FROM read_dta('__TEST_DIR__/types_tinyint.dta')
+----
+TINYINT	TINYINT
+
+query II
+SELECT * FROM read_dta('__TEST_DIR__/types_tinyint.dta')
+----
+1	-5
+
+# ============================================================
+# UTINYINT
+# ============================================================
+
+statement ok
+COPY (SELECT 0::UTINYINT AS a, 99::UTINYINT AS b) TO '__TEST_DIR__/types_utinyint.dta' (FORMAT dta)
+
+query II
+SELECT typeof(a), typeof(b) FROM read_dta('__TEST_DIR__/types_utinyint.dta')
+----
+TINYINT	TINYINT
+
+query II
+SELECT * FROM read_dta('__TEST_DIR__/types_utinyint.dta')
+----
+0	99
+
+# ============================================================
+# SMALLINT
+# ============================================================
+
+statement ok
+COPY (SELECT 1::SMALLINT AS a, (-300)::SMALLINT AS b) TO '__TEST_DIR__/types_smallint.dta' (FORMAT dta)
+
+query II
+SELECT typeof(a), typeof(b) FROM read_dta('__TEST_DIR__/types_smallint.dta')
+----
+SMALLINT	SMALLINT
+
+query II
+SELECT * FROM read_dta('__TEST_DIR__/types_smallint.dta')
+----
+1	-300
+
+# ============================================================
+# USMALLINT
+# ============================================================
+
+statement ok
+COPY (SELECT 0::USMALLINT AS a, 32000::USMALLINT AS b) TO '__TEST_DIR__/types_usmallint.dta' (FORMAT dta)
+
+query II
+SELECT typeof(a), typeof(b) FROM read_dta('__TEST_DIR__/types_usmallint.dta')
+----
+SMALLINT	SMALLINT
+
+query II
+SELECT * FROM read_dta('__TEST_DIR__/types_usmallint.dta')
+----
+0	32000
+
+# ============================================================
+# INTEGER
+# ============================================================
+
+statement ok
+COPY (SELECT 42::INTEGER AS a, (-1000)::INTEGER AS b) TO '__TEST_DIR__/types_int.dta' (FORMAT dta)
+
+query II
+SELECT typeof(a), typeof(b) FROM read_dta('__TEST_DIR__/types_int.dta')
+----
+INTEGER	INTEGER
+
+query II
+SELECT * FROM read_dta('__TEST_DIR__/types_int.dta')
+----
+42	-1000
+
+# ============================================================
+# UINTEGER
+# ============================================================
+
+statement ok
+COPY (SELECT 0::UINTEGER AS a, 1000000::UINTEGER AS b) TO '__TEST_DIR__/types_uint.dta' (FORMAT dta)
+
+query II
+SELECT typeof(a), typeof(b) FROM read_dta('__TEST_DIR__/types_uint.dta')
+----
+INTEGER	INTEGER
+
+query II
+SELECT * FROM read_dta('__TEST_DIR__/types_uint.dta')
+----
+0	1000000
+
+# ============================================================
+# BIGINT -> double (loses precision for very large values)
+# ============================================================
+
+statement ok
+COPY (SELECT 1000000000000::BIGINT AS a, (-999)::BIGINT AS b) TO '__TEST_DIR__/types_bigint.dta' (FORMAT dta)
+
+query II
+SELECT typeof(a), typeof(b) FROM read_dta('__TEST_DIR__/types_bigint.dta')
+----
+DOUBLE	DOUBLE
+
+query RR
+SELECT * FROM read_dta('__TEST_DIR__/types_bigint.dta')
+----
+1000000000000.0	-999.0
+
+# ============================================================
+# UBIGINT -> double
+# ============================================================
+
+statement ok
+COPY (SELECT 42::UBIGINT AS a) TO '__TEST_DIR__/types_ubigint.dta' (FORMAT dta)
+
+query I
+SELECT typeof(a) FROM read_dta('__TEST_DIR__/types_ubigint.dta')
+----
+DOUBLE
+
+query R
+SELECT * FROM read_dta('__TEST_DIR__/types_ubigint.dta')
+----
+42.0
+
+# ============================================================
+# HUGEINT -> double
+# ============================================================
+
+statement ok
+COPY (SELECT 12345::HUGEINT AS a) TO '__TEST_DIR__/types_hugeint.dta' (FORMAT dta)
+
+query I
+SELECT typeof(a) FROM read_dta('__TEST_DIR__/types_hugeint.dta')
+----
+DOUBLE
+
+query R
+SELECT * FROM read_dta('__TEST_DIR__/types_hugeint.dta')
+----
+12345.0
+
+# ============================================================
+# FLOAT
+# ============================================================
+
+statement ok
+COPY (SELECT 3.14::FLOAT AS a, (-0.001)::FLOAT AS b) TO '__TEST_DIR__/types_float.dta' (FORMAT dta)
+
+query II
+SELECT typeof(a), typeof(b) FROM read_dta('__TEST_DIR__/types_float.dta')
+----
+FLOAT	FLOAT
+
+# ============================================================
+# DOUBLE
+# ============================================================
+
+statement ok
+COPY (SELECT 3.141592653589793::DOUBLE AS a, (-1e100)::DOUBLE AS b) TO '__TEST_DIR__/types_double.dta' (FORMAT dta)
+
+query II
+SELECT typeof(a), typeof(b) FROM read_dta('__TEST_DIR__/types_double.dta')
+----
+DOUBLE	DOUBLE
+
+query RR
+SELECT * FROM read_dta('__TEST_DIR__/types_double.dta')
+----
+3.141592653589793	-1e+100
+
+# ============================================================
+# DECIMAL -> double
+# ============================================================
+
+statement ok
+COPY (SELECT 123.45::DECIMAL(10,2) AS a) TO '__TEST_DIR__/types_decimal.dta' (FORMAT dta)
+
+query I
+SELECT typeof(a) FROM read_dta('__TEST_DIR__/types_decimal.dta')
+----
+DOUBLE
+
+query R
+SELECT * FROM read_dta('__TEST_DIR__/types_decimal.dta')
+----
+123.45
+
+# ============================================================
+# VARCHAR
+# ============================================================
+
+statement ok
+COPY (SELECT 'hello world' AS a) TO '__TEST_DIR__/types_varchar.dta' (FORMAT dta)
+
+query I
+SELECT typeof(a) FROM read_dta('__TEST_DIR__/types_varchar.dta')
+----
+VARCHAR
+
+query I
+SELECT * FROM read_dta('__TEST_DIR__/types_varchar.dta')
+----
+hello world
+
+# ============================================================
+# DATE
+# ============================================================
+
+statement ok
+COPY (SELECT DATE '2024-06-15' AS a) TO '__TEST_DIR__/types_date.dta' (FORMAT dta)
+
+query I
+SELECT typeof(a) FROM read_dta('__TEST_DIR__/types_date.dta')
+----
+DATE
+
+query T
+SELECT * FROM read_dta('__TEST_DIR__/types_date.dta')
+----
+2024-06-15
+
+# ============================================================
+# TIMESTAMP
+# ============================================================
+
+statement ok
+COPY (SELECT TIMESTAMP '2024-06-15 12:30:45' AS a) TO '__TEST_DIR__/types_ts.dta' (FORMAT dta)
+
+query I
+SELECT typeof(a) FROM read_dta('__TEST_DIR__/types_ts.dta')
+----
+TIMESTAMP
+
+query T
+SELECT * FROM read_dta('__TEST_DIR__/types_ts.dta')
+----
+2024-06-15 12:30:45
+
+# ============================================================
+# ENUM
+# ============================================================
+
+statement ok
+CREATE TYPE color AS ENUM ('red', 'green', 'blue')
+
+statement ok
+CREATE TABLE enum_test (c color)
+
+statement ok
+INSERT INTO enum_test VALUES ('red'), ('blue'), ('green')
+
+statement ok
+COPY (SELECT * FROM enum_test) TO '__TEST_DIR__/types_enum.dta' (FORMAT dta)
+
+# Without value_labels, reads as integer
+query I
+SELECT typeof(c) FROM read_dta('__TEST_DIR__/types_enum.dta') LIMIT 1
+----
+TINYINT
+
+# With value_labels=true, reads as ENUM (sorted by Stata value code: 0=red, 1=green, 2=blue)
+query I
+SELECT typeof(c) FROM read_dta('__TEST_DIR__/types_enum.dta', value_labels=true) LIMIT 1
+----
+ENUM('red', 'green', 'blue')
+
+query I
+SELECT * FROM read_dta('__TEST_DIR__/types_enum.dta', value_labels=true) ORDER BY c
+----
+red
+green
+blue
+
+statement ok
+DROP TABLE enum_test
+
+statement ok
+DROP TYPE color

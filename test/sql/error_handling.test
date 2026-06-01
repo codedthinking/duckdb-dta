@@ -1,0 +1,30 @@
+# name: test/sql/error_handling.test
+# description: error handling for dta extension
+# group: [sql]
+
+require dta
+
+# ============================================================
+# Missing file
+# ============================================================
+
+statement error
+SELECT * FROM read_dta('nonexistent.dta')
+----
+Cannot open .dta file
+
+# ============================================================
+# Non-dta file (read a text file)
+# ============================================================
+
+statement error
+SELECT * FROM read_dta('test/sql/error_handling.test')
+----
+
+# ============================================================
+# Write to invalid path
+# ============================================================
+
+statement error
+COPY (SELECT 1 AS x) TO '/nonexistent/path/file.dta' (FORMAT dta)
+----

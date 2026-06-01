@@ -1,0 +1,64 @@
+# name: test/sql/read_dta_value_labels.test
+# description: test reading value labels from .dta files
+# group: [sql]
+
+require dta
+
+# ============================================================
+# Without value_labels: reads as raw integers
+# ============================================================
+
+query II
+SELECT typeof(gender), typeof(region) FROM read_dta('test/data/value_labels.dta') LIMIT 1
+----
+TINYINT	TINYINT
+
+query II
+SELECT * FROM read_dta('test/data/value_labels.dta')
+----
+1	1
+2	1
+1	2
+2	3
+1	3
+
+# ============================================================
+# With value_labels=true: reads as ENUM
+# ============================================================
+
+query II
+SELECT typeof(gender), typeof(region) FROM read_dta('test/data/value_labels.dta', value_labels=true) LIMIT 1
+----
+ENUM('Male', 'Female')	ENUM('North', 'South', 'East')
+
+query II
+SELECT * FROM read_dta('test/data/value_labels.dta', value_labels=true)
+----
+Male	North
+Female	North
+Male	South
+Female	East
+Male	East
+
+# ============================================================
+# Filtering on ENUM columns
+# ============================================================
+
+query I
+SELECT count(*) FROM read_dta('test/data/value_labels.dta', value_labels=true) WHERE gender = 'Male'
+----
+3
+
+query I
+SELECT count(*) FROM read_dta('test/data/value_labels.dta', value_labels=true) WHERE region = 'North'
+----
+2
+
+# ============================================================
+# value_labels=false is the same as default
+# ============================================================
+
+query II
+SELECT typeof(gender), typeof(region) FROM read_dta('test/data/value_labels.dta', value_labels=false) LIMIT 1
+----
+TINYINT	TINYINT
