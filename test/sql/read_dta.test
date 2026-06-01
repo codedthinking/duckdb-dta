@@ -1,0 +1,91 @@
+# name: test/sql/read_dta.test
+# description: test read_dta table function
+# group: [sql]
+
+require dta
+
+# ============================================================
+# Basic read: column types, names, values
+# ============================================================
+
+query IIRI
+SELECT * FROM read_dta('test/data/auto.dta') ORDER BY id
+----
+1	Acme	1000.0	2017
+2	Beta Corp	2500.5	2018
+3	Gamma	NULL	2018
+
+# ============================================================
+# Column count and row count
+# ============================================================
+
+query I
+SELECT count(*) FROM read_dta('test/data/auto.dta')
+----
+3
+
+# ============================================================
+# Type inference: int32 (long), varchar (str10), double, int16 (int)
+# ============================================================
+
+query IIII
+SELECT typeof(id), typeof(name), typeof(revenue), typeof(year)
+FROM read_dta('test/data/auto.dta') LIMIT 1
+----
+INTEGER	VARCHAR	DOUBLE	SMALLINT
+
+# ============================================================
+# Missing value handling (double NULL sentinel)
+# ============================================================
+
+query I
+SELECT count(*) FROM read_dta('test/data/auto.dta') WHERE revenue IS NULL
+----
+1
+
+query I
+SELECT id FROM read_dta('test/data/auto.dta') WHERE revenue IS NULL
+----
+3
+
+# ============================================================
+# Filtering — WHERE works
+# ============================================================
+
+query IR
+SELECT id, revenue FROM read_dta('test/data/auto.dta') WHERE year = 2018 ORDER BY id
+----
+2	2500.5
+3	NULL
+
+# ============================================================
+# Aggregation over .dta file
+# ============================================================
+
+query R
+SELECT avg(revenue) FROM read_dta('test/data/auto.dta')
+----
+1750.25
+
+# ============================================================
+# String trimming (str10 should not have trailing nulls)
+# ============================================================
+
+query I
+SELECT length(name) FROM read_dta('test/data/auto.dta') WHERE id = 1
+----
+4
+
+query I
+SELECT length(name) FROM read_dta('test/data/auto.dta') WHERE id = 2
+----
+9
+
+# ============================================================
+# Error handling: nonexistent file
+# ============================================================
+
+statement error
+SELECT * FROM read_dta('nonexistent.dta')
+----
+Cannot open .dta file

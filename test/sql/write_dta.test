@@ -1,0 +1,195 @@
+# name: test/sql/write_dta.test
+# description: test COPY TO FORMAT dta and round-trip
+# group: [sql]
+
+require dta
+
+# ============================================================
+# Basic round-trip: COPY TO then read_dta
+# ============================================================
+
+statement ok
+COPY (SELECT 1::INTEGER AS id, 'hello' AS name, 42.5 AS value) TO '__TEST_DIR__/basic.dta' (FORMAT dta)
+
+query IIR
+SELECT * FROM read_dta('__TEST_DIR__/basic.dta')
+----
+1	hello	42.5
+
+# ============================================================
+# Type mapping: INTEGER -> long (int32)
+# ============================================================
+
+statement ok
+COPY (SELECT 1::INTEGER AS x, -100::INTEGER AS y, 2147483620::INTEGER AS z) TO '__TEST_DIR__/int.dta' (FORMAT dta)
+
+query III
+SELECT typeof(x), typeof(y), typeof(z) FROM read_dta('__TEST_DIR__/int.dta')
+----
+INTEGER	INTEGER	INTEGER
+
+query III
+SELECT * FROM read_dta('__TEST_DIR__/int.dta')
+----
+1	-100	2147483620
+
+# ============================================================
+# Type mapping: TINYINT -> byte
+# ============================================================
+
+statement ok
+COPY (SELECT 1::TINYINT AS a, 100::TINYINT AS b) TO '__TEST_DIR__/tinyint.dta' (FORMAT dta)
+
+query II
+SELECT * FROM read_dta('__TEST_DIR__/tinyint.dta')
+----
+1	100
+
+# ============================================================
+# Type mapping: SMALLINT -> int (int16)
+# ============================================================
+
+statement ok
+COPY (SELECT 1::SMALLINT AS a, 32000::SMALLINT AS b) TO '__TEST_DIR__/smallint.dta' (FORMAT dta)
+
+query II
+SELECT * FROM read_dta('__TEST_DIR__/smallint.dta')
+----
+1	32000
+
+# ============================================================
+# Type mapping: BIGINT -> double
+# ============================================================
+
+statement ok
+COPY (SELECT 1000000000000::BIGINT AS big) TO '__TEST_DIR__/bigint.dta' (FORMAT dta)
+
+query R
+SELECT * FROM read_dta('__TEST_DIR__/bigint.dta')
+----
+1000000000000.0
+
+# ============================================================
+# Type mapping: BOOLEAN -> byte
+# ============================================================
+
+statement ok
+COPY (SELECT true AS a, false AS b) TO '__TEST_DIR__/bool.dta' (FORMAT dta)
+
+query II
+SELECT * FROM read_dta('__TEST_DIR__/bool.dta')
+----
+1	0
+
+# ============================================================
+# Type mapping: DATE -> double with %td format
+# ============================================================
+
+statement ok
+COPY (SELECT DATE '2024-01-15' AS dt) TO '__TEST_DIR__/date.dta' (FORMAT dta)
+
+query T
+SELECT * FROM read_dta('__TEST_DIR__/date.dta')
+----
+2024-01-15
+
+# ============================================================
+# Type mapping: TIMESTAMP -> double with %tc format
+# ============================================================
+
+statement ok
+COPY (SELECT TIMESTAMP '2024-01-15 10:30:00' AS ts) TO '__TEST_DIR__/timestamp.dta' (FORMAT dta)
+
+query T
+SELECT * FROM read_dta('__TEST_DIR__/timestamp.dta')
+----
+2024-01-15 10:30:00
+
+# ============================================================
+# Type mapping: VARCHAR -> strL
+# ============================================================
+
+statement ok
+COPY (SELECT 'short' AS a, 'a longer string value here' AS b) TO '__TEST_DIR__/varchar.dta' (FORMAT dta)
+
+query II
+SELECT * FROM read_dta('__TEST_DIR__/varchar.dta')
+----
+short	a longer string value here
+
+# ============================================================
+# NULL handling for all types
+# ============================================================
+
+statement ok
+COPY (SELECT NULL::INTEGER AS a, NULL::DOUBLE AS b, NULL::VARCHAR AS c, NULL::DATE AS d, NULL::TINYINT AS e) TO '__TEST_DIR__/nulls.dta' (FORMAT dta)
+
+query IIIII
+SELECT a IS NULL, b IS NULL, c IS NULL, d IS NULL, e IS NULL FROM read_dta('__TEST_DIR__/nulls.dta')
+----
+true	true	true	true	true
+
+# ============================================================
+# Multiple rows
+# ============================================================
+
+statement ok
+COPY (SELECT * FROM (VALUES (1, 'a', 10.0), (2, 'b', 20.0), (3, 'c', 30.0)) AS t(id, name, value)) TO '__TEST_DIR__/multi.dta' (FORMAT dta)
+
+query I
+SELECT count(*) FROM read_dta('__TEST_DIR__/multi.dta')
+----
+3
+
+query IIR
+SELECT * FROM read_dta('__TEST_DIR__/multi.dta') ORDER BY id
+----
+1	a	10.0
+2	b	20.0
+3	c	30.0
+
+# ============================================================
+# Round-trip: read existing .dta, write, read back
+# ============================================================
+
+statement ok
+COPY (SELECT * FROM read_dta('test/data/auto.dta')) TO '__TEST_DIR__/roundtrip.dta' (FORMAT dta)
+
+query IIRI
+SELECT * FROM read_dta('__TEST_DIR__/roundtrip.dta') ORDER BY id
+----
+1	Acme	1000.0	2017
+2	Beta Corp	2500.5	2018
+3	Gamma	NULL	2018
+
+# ============================================================
+# Boundary values
+# ============================================================
+
+statement ok
+COPY (SELECT (-127)::TINYINT AS mn, 100::TINYINT AS mx) TO '__TEST_DIR__/byte_bounds.dta' (FORMAT dta)
+
+query II
+SELECT * FROM read_dta('__TEST_DIR__/byte_bounds.dta')
+----
+-127	100
+
+statement ok
+COPY (SELECT (-2147483647)::INTEGER AS mn, 2147483620::INTEGER AS mx) TO '__TEST_DIR__/long_bounds.dta' (FORMAT dta)
+
+query II
+SELECT * FROM read_dta('__TEST_DIR__/long_bounds.dta')
+----
+-2147483647	2147483620
+
+# ============================================================
+# DATE epoch round-trips
+# ============================================================
+
+statement ok
+COPY (SELECT DATE '1960-01-01' AS epoch, DATE '1970-01-01' AS unix, DATE '2000-06-15' AS y2k) TO '__TEST_DIR__/dates.dta' (FORMAT dta)
+
+query TTT
+SELECT * FROM read_dta('__TEST_DIR__/dates.dta')
+----
+1960-01-01	1970-01-01	2000-06-15
