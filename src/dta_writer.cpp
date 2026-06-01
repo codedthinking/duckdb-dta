@@ -73,8 +73,8 @@ DtaWriter::~DtaWriter() {
 // After this, caller writes raw row data, then calls Finalize().
 
 void DtaWriter::WriteMetadata() {
-	// Format 118: K=2 bytes, varname=129, fmt=57, label_name=129, var_label=321,
-	//             N=8 bytes, dataset_label_len=2 bytes, sortlist=2 bytes
+	// Format 119: K=4 bytes, varname=129, fmt=57, label_name=129, var_label=321,
+	//             N=8 bytes, dataset_label_len=2 bytes, sortlist=4 bytes
 
 	// <stata_dta>
 	offsets_[0] = 0;
@@ -83,13 +83,13 @@ void DtaWriter::WriteMetadata() {
 	// <header>
 	WriteTag("<header>");
 	WriteTag("<release>");
-	WriteTag("118");
+	WriteTag("119");
 	WriteTag("</release>");
 	WriteTag("<byteorder>");
 	WriteTag("LSF");
 	WriteTag("</byteorder>");
 	WriteTag("<K>");
-	WriteU16(static_cast<uint16_t>(columns_.size()));
+	WriteU32(static_cast<uint32_t>(columns_.size()));
 	WriteTag("</K>");
 	WriteTag("<N>");
 	WriteU64(0); // placeholder, rewritten in Finalize
@@ -136,11 +136,11 @@ void DtaWriter::WriteMetadata() {
 	}
 	WriteTag("</varnames>");
 
-	// <sortlist> (K+1 entries, 2 bytes each)
+	// <sortlist> (K+1 entries, 4 bytes each for format 119)
 	offsets_[4] = static_cast<uint64_t>(ftell(fp_));
 	WriteTag("<sortlist>");
 	for (size_t i = 0; i <= columns_.size(); i++) {
-		WriteU16(0);
+		WriteU32(0);
 	}
 	WriteTag("</sortlist>");
 
@@ -283,11 +283,11 @@ void DtaWriter::Finalize(uint64_t total_obs) {
 
 	// Rewrite <N> in header
 	// <N> is at a fixed position. Let's find it:
-	// <stata_dta><header><release>118</release><byteorder>LSF</byteorder><K>xx</K><N>
-	// Tag lengths: <stata_dta>=11, <header>=8, <release>=9, 118=3, </release>=10,
-	// <byteorder>=11, LSF=3, </byteorder>=12, <K>=3, 2bytes, </K>=4, <N>=3
-	// Total to start of N content = 11+8+9+3+10+11+3+12+3+2+4+3 = 79
-	uint64_t n_pos = 79;
+	// <stata_dta><header><release>119</release><byteorder>LSF</byteorder><K>xxxx</K><N>
+	// Tag lengths: <stata_dta>=11, <header>=8, <release>=9, 119=3, </release>=10,
+	// <byteorder>=11, LSF=3, </byteorder>=12, <K>=3, 4bytes, </K>=4, <N>=3
+	// Total to start of N content = 11+8+9+3+10+11+3+12+3+4+4+3 = 81
+	uint64_t n_pos = 81;
 	fseek(fp_, static_cast<long>(n_pos), SEEK_SET);
 	WriteU64(total_obs);
 
