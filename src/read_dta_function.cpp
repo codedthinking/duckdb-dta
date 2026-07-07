@@ -311,7 +311,7 @@ static void ReadDtaScan(ClientContext &context, TableFunctionInput &data, DataCh
 
 		auto &cols = reader.Columns();
 		uint32_t row_width = reader.RowWidth();
-		bool latin1 = reader.Version() == 117;
+		bool latin1 = reader.Version() < 118;
 
 		// For each output column, extract data from the row buffer
 		for (idx_t out_col = 0; out_col < output.ColumnCount(); out_col++) {

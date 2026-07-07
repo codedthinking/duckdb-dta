@@ -10,14 +10,14 @@
 
 namespace dta {
 
-// Format 117 stores strings in the writing machine's ANSI code page rather
+// Pre-118 formats store strings in the writing machine's ANSI code page rather
 // than UTF-8; following pandas, they are decoded as Latin-1
 bool NeedsUtf8Transcode(const char *data, size_t len);
 std::string Latin1ToUtf8(const char *data, size_t len);
 
-// Version-dependent parameters for .dta formats 117-121
+// Version-dependent parameters for .dta formats 113-115 (legacy) and 117-121
 struct DtaVersionParams {
-	int version;                     // 117-121
+	int version;                     // 113-115, 117-121
 	uint32_t varname_len;            // 33 (117) or 129 (118+)
 	uint32_t sortlist_entry_size;    // 2 (117/118/120) or 4 (119/121)
 	uint32_t fmt_len;                // 49 (117) or 57 (118+)
@@ -144,6 +144,11 @@ private:
 	void ParseValueLabelNames();
 	void ParseVariableLabels();
 	void SkipCharacteristics();
+	// Legacy (113-115) layout
+	void ParseLegacyHeader();
+	void ParseLegacyDescriptors();
+	void SkipExpansionFields();
+	void ReadValueLabelTable();
 
 	uint64_t StrLKey(uint32_t v, uint64_t o) const;
 

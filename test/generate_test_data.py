@@ -344,10 +344,59 @@ def generate_int_date_file():
     write_dta_binary(path, 118, rows, columns)
 
 
+def generate_legacy_formats():
+    """Generate legacy (pre-XML) format files 114 and 115.
+
+    pandas writes format 114; format 115 (Stata 12) has a byte-identical
+    layout, so it is produced by patching the format byte on a second 114
+    file, which also carries Latin-1 content to exercise transcoding.
+    """
+    path114 = os.path.join(OUT_DIR, "format_114.dta")
+    df.to_stata(path114, write_index=False, version=114)
+    print(f"  Written {path114} (format 114)")
+
+    df_115 = pd.DataFrame(
+        {
+            "id": pd.array([1, 2, 3], dtype="int32"),
+            "name": ["café", "naïve", "plain"],
+            "score": [95.5, 87.3, 91.0],
+        }
+    )
+    path115 = os.path.join(OUT_DIR, "format_115.dta")
+    df_115.to_stata(path115, write_index=False, version=114)
+    with open(path115, "r+b") as f:
+        assert f.read(1) == bytes([114])
+        f.seek(0)
+        f.write(bytes([115]))
+    print(f"  Written {path115} (format 115, patched from 114 layout)")
+
+    # Value labels in a legacy file
+    df_labels = pd.DataFrame(
+        {
+            "gender": pd.array([1, 2, 1, 2, 1], dtype="int8"),
+            "region": pd.array([1, 1, 2, 3, 3], dtype="int8"),
+        }
+    )
+    path_vl = os.path.join(OUT_DIR, "value_labels_114.dta")
+    writer = pd.io.stata.StataWriter(
+        path_vl,
+        df_labels,
+        write_index=False,
+        value_labels={
+            "gender": {1: "Male", 2: "Female"},
+            "region": {1: "North", 2: "South", 3: "East"},
+        },
+    )
+    writer.write_file()
+    print(f"  Written {path_vl} (format 114 with value labels)")
+
+
 if __name__ == "__main__":
     os.makedirs(OUT_DIR, exist_ok=True)
     print("Generating pandas format files (117-119)...")
     generate_pandas_formats()
+    print("Generating legacy format files (114-115)...")
+    generate_legacy_formats()
     print("Generating binary format files (120-121)...")
     generate_binary_formats()
     print("Generating value labels file...")

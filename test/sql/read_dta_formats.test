@@ -157,3 +157,39 @@ SELECT id, name FROM read_dta('test/data/latin1_117.dta') ORDER BY id
 1	café
 2	naïve
 3	plain
+
+# ============================================================
+# Legacy formats 114 and 115 (pre-XML layout, Stata 10-12)
+# ============================================================
+
+query IIR
+SELECT id, name, score FROM read_dta('test/data/format_114.dta') ORDER BY id
+----
+1	Alice	95.5
+2	Bob	87.3
+3	Charlie	91.0
+
+query III
+SELECT typeof(id), typeof(name), typeof(score) FROM read_dta('test/data/format_114.dta') LIMIT 1
+----
+INTEGER	VARCHAR	DOUBLE
+
+# Format 115 with Latin-1 strings transcoded to UTF-8
+query IIR
+SELECT id, name, score FROM read_dta('test/data/format_115.dta') ORDER BY id
+----
+1	café	95.5
+2	naïve	87.3
+3	plain	91.0
+
+# Value labels in a legacy file
+query II
+SELECT gender, count(*) FROM read_dta('test/data/value_labels_114.dta', value_labels=true) GROUP BY gender ORDER BY gender
+----
+Male	3
+Female	2
+
+query I
+SELECT count(*) FROM read_dta('test/data/value_labels_114.dta', value_labels=true) WHERE gender = 'Male'
+----
+3
