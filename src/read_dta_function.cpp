@@ -63,6 +63,11 @@ static bool IsDateFormat(const string &fmt) {
 	return lower.find("%td") != string::npos || lower.find("%d") != string::npos;
 }
 
+// Casting a double outside int32 range (or NaN) to int32 is undefined behavior
+static bool FitsInInt32(double val) {
+	return val >= -2147483648.0 && val < 2147483648.0;
+}
+
 static bool IsDatetimeFormat(const string &fmt) {
 	// %tc, %tC
 	if (fmt.empty())
@@ -308,7 +313,11 @@ static void ReadDtaScan(ClientContext &context, TableFunctionInput &data, DataCh
 				if (dta::DtaMissing::IsMissingFloat(val)) {
 					FlatVector::SetNull(vec, row, true);
 				} else if (is_enum) {
-					write_enum(static_cast<int32_t>(val));
+					if (FitsInInt32(val)) {
+						write_enum(static_cast<int32_t>(val));
+					} else {
+						FlatVector::SetNull(vec, row, true);
+					}
 				} else {
 					FlatVector::GetData<float>(vec)[row] = val;
 				}
@@ -321,7 +330,11 @@ static void ReadDtaScan(ClientContext &context, TableFunctionInput &data, DataCh
 				if (dta::DtaMissing::IsMissingDouble(val)) {
 					FlatVector::SetNull(vec, row, true);
 				} else if (is_enum) {
-					write_enum(static_cast<int32_t>(val));
+					if (FitsInInt32(val)) {
+						write_enum(static_cast<int32_t>(val));
+					} else {
+						FlatVector::SetNull(vec, row, true);
+					}
 				} else if (type.id() == LogicalTypeId::DATE) {
 					int32_t stata_days = static_cast<int32_t>(val);
 					FlatVector::GetData<date_t>(vec)[row] = date_t(stata_days - STATA_EPOCH_OFFSET);

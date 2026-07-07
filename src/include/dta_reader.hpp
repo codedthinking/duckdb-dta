@@ -99,6 +99,7 @@ public:
 
 private:
 	FILE *fp_;
+	uint64_t file_size_;
 	DtaVersionParams params_;
 	bool msf_;
 	uint64_t n_obs_;

@@ -28,3 +28,35 @@ SELECT * FROM read_dta('test/sql/error_handling.test')
 statement error
 COPY (SELECT 1 AS x) TO '/nonexistent/path/file.dta' (FORMAT dta)
 ----
+
+# ============================================================
+# Corrupt files: size fields that exceed the actual file size
+# must error instead of allocating (see test/generate_corrupt_data.py)
+# ============================================================
+
+statement error
+SELECT * FROM read_dta('test/data/corrupt_nvars.dta')
+----
+Corrupt .dta file: variable count
+
+statement error
+SELECT * FROM read_dta('test/data/corrupt_nobs.dta')
+----
+Corrupt .dta file: data section extends beyond end of file
+
+statement error
+SELECT * FROM read_dta('test/data/corrupt_value_label.dta', value_labels=true)
+----
+Corrupt .dta file: value label table extends beyond end of file
+
+statement error
+SELECT * FROM read_dta('test/data/corrupt_strl_len.dta')
+----
+Corrupt .dta file: strL length extends beyond end of file
+
+# Label text without a NUL terminator: labels are truncated at the
+# end of the text blob instead of reading past it
+query I
+SELECT count(*) FROM read_dta('test/data/unterminated_label.dta', value_labels=true)
+----
+5

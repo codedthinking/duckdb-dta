@@ -262,11 +262,17 @@ void DtaReader::ReadTag(const char *expected) {
 // ─── Constructor ────────────────────────────────────────────────────────────
 
 DtaReader::DtaReader(const std::string &path)
-    : fp_(nullptr), msf_(false), n_obs_(0), row_width_(0), data_offset_(0), strls_offset_(0), value_labels_offset_(0) {
+    : fp_(nullptr), file_size_(0), msf_(false), n_obs_(0), row_width_(0), data_offset_(0), strls_offset_(0),
+      value_labels_offset_(0) {
 	fp_ = fopen(path.c_str(), "rb");
 	if (!fp_) {
 		throw std::runtime_error("Cannot open .dta file: " + path);
 	}
+
+	fseek(fp_, 0, SEEK_END);
+	long end_pos = ftell(fp_);
+	file_size_ = end_pos > 0 ? static_cast<uint64_t>(end_pos) : 0;
+	fseek(fp_, 0, SEEK_SET);
 
 	ParseHeader();
 	ParseMap();
@@ -283,10 +289,17 @@ DtaReader::DtaReader(const std::string &path)
 	SkipCharacteristics();
 
 	// Compute row width
-	row_width_ = 0;
+	uint64_t width = 0;
 	for (auto &col : columns_) {
-		row_width_ += col.byte_width;
+		width += col.byte_width;
 	}
+
+	// The declared observations must fit between <data> and end of file
+	if (data_offset_ > file_size_ || file_size_ - data_offset_ < 6 || width > std::numeric_limits<uint32_t>::max() ||
+	    (width > 0 && n_obs_ > (file_size_ - data_offset_ - 6) / width)) {
+		throw std::runtime_error("Corrupt .dta file: data section extends beyond end of file");
+	}
+	row_width_ = static_cast<uint32_t>(width);
 }
 
 DtaReader::~DtaReader() {
@@ -361,6 +374,14 @@ void DtaReader::ParseHeader() {
 	ReadTag("</timestamp>");
 
 	ReadTag("</header>");
+
+	// Each variable needs at least this much metadata (type code, name, format,
+	// value-label name, variable label), so a valid K is bounded by file size
+	uint64_t min_bytes_per_var =
+	    2ULL + params_.varname_len + params_.fmt_len + params_.label_name_len + params_.var_label_len;
+	if (static_cast<uint64_t>(n_vars) * min_bytes_per_var > file_size_) {
+		throw std::runtime_error("Corrupt .dta file: variable count " + std::to_string(n_vars) + " exceeds file size");
+	}
 
 	// Pre-allocate columns
 	columns_.resize(n_vars);
@@ -538,6 +559,12 @@ void DtaReader::LoadStrLs() {
 
 		uint32_t len = ReadU32();
 
+		long strl_pos = ftell(fp_);
+		uint64_t strl_pos64 = strl_pos > 0 ? static_cast<uint64_t>(strl_pos) : 0;
+		if (strl_pos64 > file_size_ || len > file_size_ - strl_pos64) {
+			throw std::runtime_error("Corrupt .dta file: strL length extends beyond end of file");
+		}
+
 		std::string content(len, '\0');
 		if (len > 0) {
 			ReadBytes(&content[0], len);
@@ -595,6 +622,13 @@ void DtaReader::LoadValueLabels() {
 		uint32_t n_entries = ReadU32();
 		uint32_t txtlen = ReadU32();
 
+		long lbl_pos = ftell(fp_);
+		uint64_t lbl_pos64 = lbl_pos > 0 ? static_cast<uint64_t>(lbl_pos) : 0;
+		uint64_t remaining = file_size_ > lbl_pos64 ? file_size_ - lbl_pos64 : 0;
+		if (n_entries > remaining / 8 || txtlen > remaining - static_cast<uint64_t>(n_entries) * 8) {
+			throw std::runtime_error("Corrupt .dta file: value label table extends beyond end of file");
+		}
+
 		std::vector<uint32_t> off(n_entries);
 		for (uint32_t i = 0; i < n_entries; i++) {
 			off[i] = ReadU32();
@@ -616,7 +650,9 @@ void DtaReader::LoadValueLabels() {
 		vl.name = labname;
 		for (uint32_t i = 0; i < n_entries; i++) {
 			if (off[i] < txtlen) {
-				std::string label(&txt[off[i]]);
+				// The text blob may lack a terminating NUL; never scan past it
+				const char *base = txt.data() + off[i];
+				std::string label(base, strnlen(base, txtlen - off[i]));
 				vl.mappings[val[i]] = std::move(label);
 			}
 		}
