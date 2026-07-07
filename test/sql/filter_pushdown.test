@@ -1,0 +1,63 @@
+# name: test/sql/filter_pushdown.test
+# description: pushed-down WHERE filters on read_dta scans
+# group: [sql]
+
+require dta
+
+statement ok
+COPY (SELECT range::INTEGER AS i, (range * 2)::DOUBLE AS d, 'row_' || (range % 7) AS s FROM range(10000)) TO '__TEST_DIR__/filter_rows.dta' (FORMAT dta)
+
+# Filter that skips the first several chunks entirely
+query II
+SELECT count(*), min(i) FROM read_dta('__TEST_DIR__/filter_rows.dta') WHERE i >= 9000
+----
+1000	9000
+
+# Filter that matches nothing
+query I
+SELECT count(*) FROM read_dta('__TEST_DIR__/filter_rows.dta') WHERE i < 0
+----
+0
+
+# Conjunction of filters on different columns
+query III
+SELECT i, d, s FROM read_dta('__TEST_DIR__/filter_rows.dta') WHERE i > 6995 AND d < 14000 ORDER BY i
+----
+6996	13992.0	row_3
+6997	13994.0	row_4
+6998	13996.0	row_5
+6999	13998.0	row_6
+
+# String equality filter
+query I
+SELECT count(*) FROM read_dta('__TEST_DIR__/filter_rows.dta') WHERE s = 'row_3'
+----
+1429
+
+# IS NULL / IS NOT NULL on a column with missing values
+statement ok
+COPY (SELECT CASE WHEN range % 3 = 0 THEN NULL ELSE range::INTEGER END AS v FROM range(9)) TO '__TEST_DIR__/filter_nulls.dta' (FORMAT dta)
+
+query I
+SELECT count(*) FROM read_dta('__TEST_DIR__/filter_nulls.dta') WHERE v IS NULL
+----
+3
+
+query I
+SELECT v FROM read_dta('__TEST_DIR__/filter_nulls.dta') WHERE v IS NOT NULL AND v <= 4 ORDER BY v
+----
+1
+2
+4
+
+# Filter on a DATE column converted from Stata %td
+query I
+SELECT count(*) FROM read_dta('test/data/int_dates.dta') WHERE d_long >= DATE '1960-01-01'
+----
+2
+
+# Filter combined with value labels (ENUM comparison)
+query I
+SELECT count(*) FROM read_dta('test/data/value_labels.dta', value_labels=true) WHERE gender = 'Male'
+----
+3
