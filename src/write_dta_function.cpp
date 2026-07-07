@@ -2,10 +2,12 @@
 #include "dta_writer.hpp"
 
 #include "duckdb/common/types/date.hpp"
+#include "duckdb/common/types/hugeint.hpp"
 #include "duckdb/common/types/timestamp.hpp"
 #include "duckdb/function/copy_function.hpp"
 #include "duckdb/main/client_context.hpp"
 
+#include <cmath>
 #include <cstring>
 #include <mutex>
 
@@ -29,7 +31,18 @@ struct WriteDtaBindData : public FunctionData {
 
 	bool Equals(const FunctionData &other_p) const override {
 		auto &other = other_p.Cast<WriteDtaBindData>();
-		return columns.size() == other.columns.size() && dataset_label == other.dataset_label;
+		if (columns.size() != other.columns.size() || dataset_label != other.dataset_label) {
+			return false;
+		}
+		for (idx_t i = 0; i < columns.size(); i++) {
+			auto &a = columns[i];
+			auto &b = other.columns[i];
+			if (a.name != b.name || a.type_code != b.type_code || a.byte_width != b.byte_width ||
+			    a.format != b.format || a.value_label_name != b.value_label_name || a.label != b.label) {
+				return false;
+			}
+		}
+		return true;
 	}
 };
 
@@ -389,6 +402,24 @@ static void WriteDtaSink(ExecutionContext &context, FunctionData &bind_data, Glo
 						val = static_cast<double>(FlatVector::GetData<int16_t>(vec)[row]);
 					} else if (val_type == LogicalTypeId::TINYINT) {
 						val = static_cast<double>(FlatVector::GetData<int8_t>(vec)[row]);
+					} else if (val_type == LogicalTypeId::HUGEINT) {
+						val = Hugeint::Cast<double>(FlatVector::GetData<hugeint_t>(vec)[row]);
+					} else if (val_type == LogicalTypeId::DECIMAL) {
+						double divisor = std::pow(10.0, DecimalType::GetScale(vec.GetType()));
+						switch (vec.GetType().InternalType()) {
+						case PhysicalType::INT16:
+							val = FlatVector::GetData<int16_t>(vec)[row] / divisor;
+							break;
+						case PhysicalType::INT32:
+							val = FlatVector::GetData<int32_t>(vec)[row] / divisor;
+							break;
+						case PhysicalType::INT64:
+							val = FlatVector::GetData<int64_t>(vec)[row] / divisor;
+							break;
+						default:
+							val = Hugeint::Cast<double>(FlatVector::GetData<hugeint_t>(vec)[row]) / divisor;
+							break;
+						}
 					} else {
 						// Fallback: use Value conversion
 						val = vec.GetValue(row).CastAs(context.client, LogicalType::DOUBLE).GetValue<double>();
@@ -406,17 +437,16 @@ static void WriteDtaSink(ExecutionContext &context, FunctionData &bind_data, Glo
 					if (s.empty()) {
 						memset(dest, 0, 8);
 					} else {
-						// v = 1-based column index, o = 1-based observation index,
-						// stored as v(3 bytes) + o(5 bytes) little-endian per format 119
-						uint32_t v_ref = static_cast<uint32_t>(col + 1);
-						uint64_t o_ref = obs_idx;
+						// v = 1-based column index, o = 1-based observation index;
+						// identical strings reuse the first occurrence's reference.
+						// Stored as v(3 bytes) + o(5 bytes) little-endian per format 119
+						auto ref = writer.AddStrL(static_cast<uint32_t>(col + 1), obs_idx, s);
 						for (int b = 0; b < 3; b++) {
-							dest[b] = static_cast<char>((v_ref >> (8 * b)) & 0xFF);
+							dest[b] = static_cast<char>((ref.v >> (8 * b)) & 0xFF);
 						}
 						for (int b = 0; b < 5; b++) {
-							dest[3 + b] = static_cast<char>((o_ref >> (8 * b)) & 0xFF);
+							dest[3 + b] = static_cast<char>((ref.o >> (8 * b)) & 0xFF);
 						}
-						writer.AddStrL(v_ref, o_ref, s);
 					}
 					break;
 				}

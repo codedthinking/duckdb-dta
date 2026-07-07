@@ -3,11 +3,17 @@
 #include "duckdb/common/file_system.hpp"
 
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 namespace dta {
+
+// Format 117 stores strings in the writing machine's ANSI code page rather
+// than UTF-8; following pandas, they are decoded as Latin-1
+bool NeedsUtf8Transcode(const char *data, size_t len);
+std::string Latin1ToUtf8(const char *data, size_t len);
 
 // Version-dependent parameters for .dta formats 117-121
 struct DtaVersionParams {
@@ -113,6 +119,9 @@ public:
 
 private:
 	duckdb::unique_ptr<duckdb::FileHandle> handle_;
+	// Serializes positional reads on filesystems whose handles are not safe
+	// for concurrent access (e.g. httpfs)
+	std::mutex io_mutex_;
 	uint64_t file_size_;
 	DtaVersionParams params_;
 	bool msf_;

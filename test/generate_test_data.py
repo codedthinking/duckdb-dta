@@ -301,6 +301,49 @@ def generate_strl_file():
     print(f"  Written {path} (format 118 with strLs)")
 
 
+def generate_latin1_file():
+    """Generate a format 117 .dta file with Latin-1 encoded strings.
+
+    Format 117 predates Stata's UTF-8 support; strings are stored in the
+    writing machine's ANSI code page (Latin-1 here, following pandas).
+    """
+    df_latin1 = pd.DataFrame(
+        {
+            "id": pd.array([1, 2, 3], dtype="int32"),
+            "name": ["café", "naïve", "plain"],
+        }
+    )
+    path = os.path.join(OUT_DIR, "latin1_117.dta")
+    writer = pd.io.stata.StataWriter117(path, df_latin1, write_index=False)
+    writer.write_file()
+    print(f"  Written {path} (format 117 with Latin-1 strings)")
+
+
+def generate_int_date_file():
+    """Generate a .dta file whose %td date columns are stored as integers.
+
+    Stata commonly stores %td dates in int/long variables, not just double
+    (pandas always writes them as double, so this file is built manually).
+    """
+    from datetime import date
+
+    columns = [
+        ("id", 65528, 4, "%12.0g"),  # long
+        ("d_long", 65528, 4, "%td"),  # long %td
+        ("d_int", 65529, 2, "%td"),  # int %td
+    ]
+
+    epoch = date(1960, 1, 1)
+    dates = [date(1960, 1, 1), date(2024, 6, 15), date(1959, 12, 25)]
+    rows = []
+    for i, d in enumerate(dates):
+        days = (d - epoch).days
+        rows.append(struct.pack("<iih", i + 1, days, days))
+
+    path = os.path.join(OUT_DIR, "int_dates.dta")
+    write_dta_binary(path, 118, rows, columns)
+
+
 if __name__ == "__main__":
     os.makedirs(OUT_DIR, exist_ok=True)
     print("Generating pandas format files (117-119)...")
@@ -311,4 +354,8 @@ if __name__ == "__main__":
     generate_value_labels_file()
     print("Generating strL file...")
     generate_strl_file()
+    print("Generating Latin-1 file...")
+    generate_latin1_file()
+    print("Generating integer-date file...")
+    generate_int_date_file()
     print("Done!")

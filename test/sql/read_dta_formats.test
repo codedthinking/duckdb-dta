@@ -130,3 +130,30 @@ SELECT id, length(txt) FROM read_dta('test/data/strl_118.dta') ORDER BY id
 1	16
 2	17
 3	3000
+
+# ============================================================
+# %td dates stored as integer types (int/long), format 118
+# ============================================================
+
+query III
+SELECT typeof(id), typeof(d_long), typeof(d_int) FROM read_dta('test/data/int_dates.dta') LIMIT 1
+----
+INTEGER	DATE	DATE
+
+query III
+SELECT id, d_long, d_int FROM read_dta('test/data/int_dates.dta') ORDER BY id
+----
+1	1960-01-01	1960-01-01
+2	2024-06-15	2024-06-15
+3	1959-12-25	1959-12-25
+
+# ============================================================
+# Format 117 Latin-1 strings are transcoded to UTF-8
+# ============================================================
+
+query II
+SELECT id, name FROM read_dta('test/data/latin1_117.dta') ORDER BY id
+----
+1	café
+2	naïve
+3	plain

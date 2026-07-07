@@ -23,10 +23,9 @@ struct WriterValueLabel {
 	std::unordered_map<int32_t, std::string> mappings;
 };
 
-struct StrLEntry {
+struct StrLRef {
 	uint32_t v; // 1-based variable index
 	uint64_t o; // 1-based observation index
-	std::string value;
 };
 
 class DtaWriter {
@@ -41,8 +40,10 @@ public:
 	// Write raw row data (row_width bytes per row, already packed)
 	void WriteRowData(const char *data, size_t n_bytes);
 
-	// Add a strL entry (call during sink, before Finalize)
-	void AddStrL(uint32_t v, uint64_t o, const std::string &value);
+	// Register a strL value and get the (v, o) reference to embed in the row.
+	// Identical strings are deduplicated: repeats return the first occurrence's
+	// reference and are stored only once.
+	StrLRef AddStrL(uint32_t v, uint64_t o, const std::string &value);
 
 	// Add a value label definition (call before Finalize)
 	void AddValueLabel(const WriterValueLabel &vl);
@@ -64,7 +65,9 @@ private:
 	uint64_t offsets_[14];
 	uint64_t map_content_pos_; // file position where the 14 offsets start
 
-	std::vector<StrLEntry> strl_entries_;
+	// value -> first (v, o) reference; entries are written in first-seen order
+	std::unordered_map<std::string, StrLRef> strl_map_;
+	std::vector<const std::pair<const std::string, StrLRef> *> strl_order_;
 	std::vector<WriterValueLabel> value_labels_;
 
 	void WriteBytes(const void *buf, size_t n);

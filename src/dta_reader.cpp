@@ -10,6 +10,32 @@ namespace dta {
 
 const std::string DtaReader::empty_strl_;
 
+// ─── Latin-1 → UTF-8 (format 117 strings) ──────────────────────────────────
+
+bool NeedsUtf8Transcode(const char *data, size_t len) {
+	for (size_t i = 0; i < len; i++) {
+		if (static_cast<unsigned char>(data[i]) >= 0x80) {
+			return true;
+		}
+	}
+	return false;
+}
+
+std::string Latin1ToUtf8(const char *data, size_t len) {
+	std::string out;
+	out.reserve(len * 2);
+	for (size_t i = 0; i < len; i++) {
+		unsigned char c = static_cast<unsigned char>(data[i]);
+		if (c < 0x80) {
+			out.push_back(static_cast<char>(c));
+		} else {
+			out.push_back(static_cast<char>(0xC0 | (c >> 6)));
+			out.push_back(static_cast<char>(0x80 | (c & 0x3F)));
+		}
+	}
+	return out;
+}
+
 // ─── Version params ─────────────────────────────────────────────────────────
 
 DtaVersionParams DtaVersionParams::ForVersion(int version) {
@@ -260,7 +286,11 @@ std::string DtaReader::ReadFixedString(uint32_t len) {
 	ReadBytes(buf.data(), len);
 	// Find null terminator
 	auto end = std::find(buf.begin(), buf.end(), '\0');
-	return std::string(buf.begin(), end);
+	std::string result(buf.begin(), end);
+	if (params_.version == 117 && NeedsUtf8Transcode(result.data(), result.size())) {
+		return Latin1ToUtf8(result.data(), result.size());
+	}
+	return result;
 }
 
 void DtaReader::ReadTag(const char *expected) {
@@ -363,6 +393,9 @@ void DtaReader::ParseHeader() {
 	if (label_len > 0) {
 		dataset_label_.resize(label_len);
 		ReadBytes(&dataset_label_[0], label_len);
+		if (params_.version == 117 && NeedsUtf8Transcode(dataset_label_.data(), dataset_label_.size())) {
+			dataset_label_ = Latin1ToUtf8(dataset_label_.data(), dataset_label_.size());
+		}
 	}
 	ReadTag("</label>");
 
@@ -415,18 +448,9 @@ void DtaReader::ParseVariableTypes() {
 	}
 	ReadTag("</variable_types>");
 
-	// Filter out alias variables (type 65525) for formats 120/121
+	// Alias variables (type 65525, formats 120/121) carry no data; they are
+	// kept through metadata parsing and filtered out in ParseVariableLabels
 	if (params_.has_alias_vars) {
-		std::vector<DtaColumn> filtered;
-		for (size_t i = 0; i < raw_types.size(); i++) {
-			if (raw_types[i] != 65525) {
-				columns_[i].type_code = raw_types[i];
-				columns_[i].byte_width = DtaTypeByteWidth(raw_types[i]);
-				filtered.push_back(columns_[i]);
-			}
-		}
-		// We need to track original indices for varnames/formats/labels parsing
-		// For now, store all columns then filter after all metadata is parsed
 		for (size_t i = 0; i < columns_.size(); i++) {
 			columns_[i].type_code = raw_types[i];
 			columns_[i].byte_width = (raw_types[i] == 65525) ? 0 : DtaTypeByteWidth(raw_types[i]);
@@ -512,11 +536,15 @@ size_t DtaReader::ReadRows(uint64_t start_row, uint32_t count, std::vector<char>
 	uint64_t data_content_offset = data_offset_ + 6;
 	uint64_t byte_offset = data_content_offset + start_row * row_width_;
 
-	handle_->Seek(byte_offset);
-
 	size_t total_bytes = static_cast<size_t>(actual) * row_width_;
 	buffer.resize(total_bytes);
-	ReadBytes(buffer.data(), total_bytes);
+	// Positional read: no shared seek state, so concurrent scans are safe
+	if (handle_->OnDiskFile()) {
+		handle_->Read(buffer.data(), total_bytes, byte_offset);
+	} else {
+		std::lock_guard<std::mutex> guard(io_mutex_);
+		handle_->Read(buffer.data(), total_bytes, byte_offset);
+	}
 	return actual;
 }
 
@@ -577,9 +605,15 @@ void DtaReader::LoadStrLs() {
 		if (len > 0) {
 			ReadBytes(&content[0], len);
 		}
-		// Remove trailing null if present
-		if (!content.empty() && content.back() == '\0') {
-			content.pop_back();
+		if (t == 130) {
+			// ASCII/UTF-8 strLs include a trailing NUL in len; binary
+			// strLs (t=129) must keep every byte
+			if (!content.empty() && content.back() == '\0') {
+				content.pop_back();
+			}
+			if (params_.version == 117 && NeedsUtf8Transcode(content.data(), content.size())) {
+				content = Latin1ToUtf8(content.data(), content.size());
+			}
 		}
 
 		strl_table_[StrLKey(v, o)] = std::move(content);
@@ -657,6 +691,9 @@ void DtaReader::LoadValueLabels() {
 				// The text blob may lack a terminating NUL; never scan past it
 				const char *base = txt.data() + off[i];
 				std::string label(base, strnlen(base, txtlen - off[i]));
+				if (params_.version == 117 && NeedsUtf8Transcode(label.data(), label.size())) {
+					label = Latin1ToUtf8(label.data(), label.size());
+				}
 				vl.mappings[val[i]] = std::move(label);
 			}
 		}
