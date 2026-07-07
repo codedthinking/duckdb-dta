@@ -40,21 +40,21 @@ SELECT * FROM read_dta('__TEST_DIR__/types_tinyint.dta')
 1	-5
 
 # ============================================================
-# UTINYINT
+# UTINYINT -> Stata int (byte only holds up to 100)
 # ============================================================
 
 statement ok
-COPY (SELECT 0::UTINYINT AS a, 99::UTINYINT AS b) TO '__TEST_DIR__/types_utinyint.dta' (FORMAT dta)
+COPY (SELECT 0::UTINYINT AS a, 255::UTINYINT AS b) TO '__TEST_DIR__/types_utinyint.dta' (FORMAT dta)
 
 query II
 SELECT typeof(a), typeof(b) FROM read_dta('__TEST_DIR__/types_utinyint.dta')
 ----
-TINYINT	TINYINT
+SMALLINT	SMALLINT
 
 query II
 SELECT * FROM read_dta('__TEST_DIR__/types_utinyint.dta')
 ----
-0	99
+0	255
 
 # ============================================================
 # SMALLINT
@@ -74,21 +74,21 @@ SELECT * FROM read_dta('__TEST_DIR__/types_smallint.dta')
 1	-300
 
 # ============================================================
-# USMALLINT
+# USMALLINT -> Stata long (int only holds up to 32740)
 # ============================================================
 
 statement ok
-COPY (SELECT 0::USMALLINT AS a, 32000::USMALLINT AS b) TO '__TEST_DIR__/types_usmallint.dta' (FORMAT dta)
+COPY (SELECT 0::USMALLINT AS a, 65535::USMALLINT AS b) TO '__TEST_DIR__/types_usmallint.dta' (FORMAT dta)
 
 query II
 SELECT typeof(a), typeof(b) FROM read_dta('__TEST_DIR__/types_usmallint.dta')
 ----
-SMALLINT	SMALLINT
+INTEGER	INTEGER
 
 query II
 SELECT * FROM read_dta('__TEST_DIR__/types_usmallint.dta')
 ----
-0	32000
+0	65535
 
 # ============================================================
 # INTEGER
@@ -108,21 +108,21 @@ SELECT * FROM read_dta('__TEST_DIR__/types_int.dta')
 42	-1000
 
 # ============================================================
-# UINTEGER
+# UINTEGER -> double (long only holds up to 2147483620)
 # ============================================================
 
 statement ok
-COPY (SELECT 0::UINTEGER AS a, 1000000::UINTEGER AS b) TO '__TEST_DIR__/types_uint.dta' (FORMAT dta)
+COPY (SELECT 0::UINTEGER AS a, 4294967295::UINTEGER AS b) TO '__TEST_DIR__/types_uint.dta' (FORMAT dta)
 
 query II
 SELECT typeof(a), typeof(b) FROM read_dta('__TEST_DIR__/types_uint.dta')
 ----
-INTEGER	INTEGER
+DOUBLE	DOUBLE
 
-query II
+query RR
 SELECT * FROM read_dta('__TEST_DIR__/types_uint.dta')
 ----
-0	1000000
+0.0	4294967295.0
 
 # ============================================================
 # BIGINT -> double (loses precision for very large values)

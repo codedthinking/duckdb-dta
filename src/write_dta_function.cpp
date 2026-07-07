@@ -72,6 +72,18 @@ static float MissingFloat() {
 	return val;
 }
 
+// Read an ENUM value's index according to its physical storage type
+static uint32_t GetEnumIndex(Vector &vec, idx_t row) {
+	switch (vec.GetType().InternalType()) {
+	case PhysicalType::UINT8:
+		return FlatVector::GetData<uint8_t>(vec)[row];
+	case PhysicalType::UINT16:
+		return FlatVector::GetData<uint16_t>(vec)[row];
+	default:
+		return FlatVector::GetData<uint32_t>(vec)[row];
+	}
+}
+
 // ─── Type mapping ───────────────────────────────────────────────────────────
 
 static dta::DtaWriteColumn MapDuckDBType(const string &name, const LogicalType &type) {
@@ -81,23 +93,23 @@ static dta::DtaWriteColumn MapDuckDBType(const string &name, const LogicalType &
 	switch (type.id()) {
 	case LogicalTypeId::BOOLEAN:
 	case LogicalTypeId::TINYINT:
-	case LogicalTypeId::UTINYINT:
 		col.type_code = 65530; // byte
 		col.byte_width = 1;
 		col.format = "%8.0g";
 		break;
+	case LogicalTypeId::UTINYINT: // 0..255 exceeds byte's max of 100
 	case LogicalTypeId::SMALLINT:
-	case LogicalTypeId::USMALLINT:
 		col.type_code = 65529; // int (2-byte)
 		col.byte_width = 2;
 		col.format = "%8.0g";
 		break;
+	case LogicalTypeId::USMALLINT: // 0..65535 exceeds int's max of 32740
 	case LogicalTypeId::INTEGER:
-	case LogicalTypeId::UINTEGER:
 		col.type_code = 65528; // long (4-byte)
 		col.byte_width = 4;
 		col.format = "%12.0g";
 		break;
+	case LogicalTypeId::UINTEGER: // 0..2^32-1 exceeds long's max of 2147483620
 	case LogicalTypeId::BIGINT:
 	case LogicalTypeId::UBIGINT:
 	case LogicalTypeId::HUGEINT:
@@ -286,19 +298,17 @@ static void WriteDtaSink(ExecutionContext &context, FunctionData &bind_data, Glo
 					if (val_type == LogicalTypeId::BOOLEAN) {
 						val = FlatVector::GetData<bool>(vec)[row] ? 1 : 0;
 					} else if (val_type == LogicalTypeId::ENUM) {
-						auto enum_size = EnumType::GetSize(vec.GetType());
-						if (enum_size <= 256) {
-							val = static_cast<int8_t>(FlatVector::GetData<uint8_t>(vec)[row]);
-						} else {
-							val = static_cast<int8_t>(FlatVector::GetData<uint16_t>(vec)[row]);
-						}
-					} else if (val_type == LogicalTypeId::UTINYINT) {
-						val = static_cast<int8_t>(FlatVector::GetData<uint8_t>(vec)[row]);
+						val = static_cast<int8_t>(GetEnumIndex(vec, row));
 					} else if (val_type == LogicalTypeId::TINYINT) {
 						val = FlatVector::GetData<int8_t>(vec)[row];
 					} else {
-						val = static_cast<int8_t>(
-						    vec.GetValue(row).CastAs(context.client, LogicalType::TINYINT).GetValue<int8_t>());
+						val = vec.GetValue(row).CastAs(context.client, LogicalType::TINYINT).GetValue<int8_t>();
+					}
+					if (val > 100 || val < -127) {
+						throw InvalidInputException(
+						    "Value %d in column \"%s\" is out of range for Stata byte (-127..100); "
+						    "cast the column to SMALLINT",
+						    val, col_def.name);
 					}
 					memcpy(dest, &val, 1);
 					break;
@@ -306,13 +316,19 @@ static void WriteDtaSink(ExecutionContext &context, FunctionData &bind_data, Glo
 				case 65529: { // int (2-byte)
 					int16_t val;
 					if (val_type == LogicalTypeId::ENUM) {
-						val = static_cast<int16_t>(FlatVector::GetData<uint16_t>(vec)[row]);
-					} else if (val_type == LogicalTypeId::USMALLINT) {
-						val = static_cast<int16_t>(FlatVector::GetData<uint16_t>(vec)[row]);
+						val = static_cast<int16_t>(GetEnumIndex(vec, row));
+					} else if (val_type == LogicalTypeId::UTINYINT) {
+						val = FlatVector::GetData<uint8_t>(vec)[row];
 					} else if (val_type == LogicalTypeId::SMALLINT) {
 						val = FlatVector::GetData<int16_t>(vec)[row];
 					} else {
 						val = vec.GetValue(row).CastAs(context.client, LogicalType::SMALLINT).GetValue<int16_t>();
+					}
+					if (val > 32740 || val < -32767) {
+						throw InvalidInputException(
+						    "Value %d in column \"%s\" is out of range for Stata int (-32767..32740); "
+						    "cast the column to INTEGER",
+						    val, col_def.name);
 					}
 					memcpy(dest, &val, 2);
 					break;
@@ -320,13 +336,19 @@ static void WriteDtaSink(ExecutionContext &context, FunctionData &bind_data, Glo
 				case 65528: { // long (4-byte)
 					int32_t val;
 					if (val_type == LogicalTypeId::ENUM) {
-						val = static_cast<int32_t>(FlatVector::GetData<uint32_t>(vec)[row]);
+						val = static_cast<int32_t>(GetEnumIndex(vec, row));
+					} else if (val_type == LogicalTypeId::USMALLINT) {
+						val = FlatVector::GetData<uint16_t>(vec)[row];
 					} else if (val_type == LogicalTypeId::INTEGER) {
 						val = FlatVector::GetData<int32_t>(vec)[row];
-					} else if (val_type == LogicalTypeId::UINTEGER) {
-						val = static_cast<int32_t>(FlatVector::GetData<uint32_t>(vec)[row]);
 					} else {
 						val = vec.GetValue(row).CastAs(context.client, LogicalType::INTEGER).GetValue<int32_t>();
+					}
+					if (val > 2147483620 || val < -2147483647) {
+						throw InvalidInputException(
+						    "Value %d in column \"%s\" is out of range for Stata long (-2147483647..2147483620); "
+						    "cast the column to BIGINT",
+						    val, col_def.name);
 					}
 					memcpy(dest, &val, 4);
 					break;
@@ -359,6 +381,8 @@ static void WriteDtaSink(ExecutionContext &context, FunctionData &bind_data, Glo
 						val = static_cast<double>(FlatVector::GetData<int64_t>(vec)[row]);
 					} else if (val_type == LogicalTypeId::UBIGINT) {
 						val = static_cast<double>(FlatVector::GetData<uint64_t>(vec)[row]);
+					} else if (val_type == LogicalTypeId::UINTEGER) {
+						val = static_cast<double>(FlatVector::GetData<uint32_t>(vec)[row]);
 					} else if (val_type == LogicalTypeId::INTEGER) {
 						val = static_cast<double>(FlatVector::GetData<int32_t>(vec)[row]);
 					} else if (val_type == LogicalTypeId::SMALLINT) {
@@ -382,12 +406,17 @@ static void WriteDtaSink(ExecutionContext &context, FunctionData &bind_data, Glo
 					if (s.empty()) {
 						memset(dest, 0, 8);
 					} else {
-						// v = 1-based column index, o = 1-based observation index
+						// v = 1-based column index, o = 1-based observation index,
+						// stored as v(3 bytes) + o(5 bytes) little-endian per format 119
 						uint32_t v_ref = static_cast<uint32_t>(col + 1);
-						uint32_t o_ref = static_cast<uint32_t>(obs_idx);
-						memcpy(dest, &v_ref, 4);
-						memcpy(dest + 4, &o_ref, 4);
-						writer.AddStrL(v_ref, obs_idx, s);
+						uint64_t o_ref = obs_idx;
+						for (int b = 0; b < 3; b++) {
+							dest[b] = static_cast<char>((v_ref >> (8 * b)) & 0xFF);
+						}
+						for (int b = 0; b < 5; b++) {
+							dest[3 + b] = static_cast<char>((o_ref >> (8 * b)) & 0xFF);
+						}
+						writer.AddStrL(v_ref, o_ref, s);
 					}
 					break;
 				}

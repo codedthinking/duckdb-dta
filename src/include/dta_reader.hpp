@@ -91,6 +91,19 @@ public:
 	// strL support
 	void LoadStrLs();
 	const std::string &ResolveStrL(uint32_t v, uint64_t o) const;
+	// Bytes used by v in the 8-byte (v, o) data-cell reference:
+	// 4 in format 117, 2 in 118/120, 3 in 119/121
+	int StrLVBytes() const {
+		switch (params_.version) {
+		case 117:
+			return 4;
+		case 118:
+		case 120:
+			return 2;
+		default:
+			return 3; // 119, 121
+		}
+	}
 
 	// Value labels
 	void LoadValueLabels();
@@ -122,6 +135,8 @@ private:
 	void ParseValueLabelNames();
 	void ParseVariableLabels();
 	void SkipCharacteristics();
+
+	uint64_t StrLKey(uint32_t v, uint64_t o) const;
 
 	// I/O helpers
 	template <typename T>

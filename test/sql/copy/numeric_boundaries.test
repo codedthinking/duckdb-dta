@@ -16,9 +16,17 @@ SELECT * FROM read_dta('__TEST_DIR__/byte_bounds.dta')
 ----
 -127	100	0
 
-# 101 is the missing sentinel for byte — TINYINT can hold 101 but it becomes NULL in Stata
-statement ok
-COPY (SELECT 101::SMALLINT AS sentinel) TO '__TEST_DIR__/byte_sentinel.dta' (FORMAT dta)
+# 101 and above collide with Stata byte missing codes — writing errors instead
+# of silently producing missing values
+statement error
+COPY (SELECT 101::TINYINT AS sentinel) TO '__TEST_DIR__/byte_sentinel.dta' (FORMAT dta)
+----
+out of range for Stata byte
+
+statement error
+COPY (SELECT (-128)::TINYINT AS below_min) TO '__TEST_DIR__/byte_below.dta' (FORMAT dta)
+----
+out of range for Stata byte
 
 # ============================================================
 # SMALLINT/int boundaries: valid range -32767 to 32740
@@ -31,6 +39,16 @@ query III
 SELECT * FROM read_dta('__TEST_DIR__/int_bounds.dta')
 ----
 -32767	32740	0
+
+statement error
+COPY (SELECT 32741::SMALLINT AS at_sentinel) TO '__TEST_DIR__/int_sentinel.dta' (FORMAT dta)
+----
+out of range for Stata int
+
+statement error
+COPY (SELECT (-32768)::SMALLINT AS below_min) TO '__TEST_DIR__/int_below.dta' (FORMAT dta)
+----
+out of range for Stata int
 
 # ============================================================
 # INTEGER/long boundaries: valid range -2147483647 to 2147483620
@@ -45,14 +63,16 @@ SELECT * FROM read_dta('__TEST_DIR__/long_bounds.dta')
 -2147483647	2147483620	0
 
 # Value at the sentinel boundary: 2147483621 is the Stata missing long sentinel
-# Writing this as INTEGER and reading back should give NULL
-statement ok
+# — writing errors instead of silently producing a missing value
+statement error
 COPY (SELECT 2147483621::INTEGER AS at_sentinel) TO '__TEST_DIR__/long_sentinel.dta' (FORMAT dta)
-
-query I
-SELECT at_sentinel IS NULL FROM read_dta('__TEST_DIR__/long_sentinel.dta')
 ----
-true
+out of range for Stata long
+
+statement error
+COPY (SELECT (-2147483648)::INTEGER AS below_min) TO '__TEST_DIR__/long_below.dta' (FORMAT dta)
+----
+out of range for Stata long
 
 # ============================================================
 # DOUBLE boundary values

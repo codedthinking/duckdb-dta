@@ -522,6 +522,13 @@ size_t DtaReader::ReadRows(uint64_t start_row, uint32_t count, std::vector<char>
 
 // ─── strL support ───────────────────────────────────────────────────────────
 
+uint64_t DtaReader::StrLKey(uint32_t v, uint64_t o) const {
+	// Pack exactly as the data-cell layout does: v in the top bytes,
+	// o in the remaining 8 - StrLVBytes() bytes
+	int o_bits = 8 * (8 - StrLVBytes());
+	return (static_cast<uint64_t>(v) << o_bits) | (o & ((1ULL << o_bits) - 1));
+}
+
 void DtaReader::LoadStrLs() {
 	handle_->Seek(strls_offset_);
 	ReadTag("<strls>");
@@ -575,15 +582,12 @@ void DtaReader::LoadStrLs() {
 			content.pop_back();
 		}
 
-		// Pack (v, o) into a single 64-bit key
-		uint64_t key = (static_cast<uint64_t>(v) << 32) | (o & 0xffffffffULL);
-		strl_table_[key] = std::move(content);
+		strl_table_[StrLKey(v, o)] = std::move(content);
 	}
 }
 
 const std::string &DtaReader::ResolveStrL(uint32_t v, uint64_t o) const {
-	uint64_t key = (static_cast<uint64_t>(v) << 32) | (o & 0xffffffffULL);
-	auto it = strl_table_.find(key);
+	auto it = strl_table_.find(StrLKey(v, o));
 	if (it != strl_table_.end()) {
 		return it->second;
 	}

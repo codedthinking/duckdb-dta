@@ -282,6 +282,25 @@ def generate_value_labels_file():
     print(f"  Written {path} (with value labels)")
 
 
+def generate_strl_file():
+    """Generate a format 118 .dta file with strL columns using pandas.
+
+    In formats 118+ the 8-byte strL reference in the data section is
+    v(2 bytes) + o(6 bytes), unlike format 117's v(4) + o(4), so a
+    Stata-tool-written file catches layout bugs that extension-only
+    roundtrip tests cannot.
+    """
+    df_strl = pd.DataFrame(
+        {
+            "id": pd.array([1, 2, 3], dtype="int32"),
+            "txt": ["first strl value", "second strl value", "x" * 3000],
+        }
+    )
+    path = os.path.join(OUT_DIR, "strl_118.dta")
+    df_strl.to_stata(path, write_index=False, version=118, convert_strl=["txt"])
+    print(f"  Written {path} (format 118 with strLs)")
+
+
 if __name__ == "__main__":
     os.makedirs(OUT_DIR, exist_ok=True)
     print("Generating pandas format files (117-119)...")
@@ -290,4 +309,6 @@ if __name__ == "__main__":
     generate_binary_formats()
     print("Generating value labels file...")
     generate_value_labels_file()
+    print("Generating strL file...")
+    generate_strl_file()
     print("Done!")

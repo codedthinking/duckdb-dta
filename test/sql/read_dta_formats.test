@@ -112,3 +112,21 @@ query I
 SELECT count(*) FROM read_dta('test/data/format_121.dta')
 ----
 3
+
+# ============================================================
+# Format 118 with strL columns written by pandas
+# (v(2)+o(6) data-cell layout, unlike format 117's v(4)+o(4))
+# ============================================================
+
+query II
+SELECT id, txt FROM read_dta('test/data/strl_118.dta') WHERE id < 3 ORDER BY id
+----
+1	first strl value
+2	second strl value
+
+query II
+SELECT id, length(txt) FROM read_dta('test/data/strl_118.dta') ORDER BY id
+----
+1	16
+2	17
+3	3000

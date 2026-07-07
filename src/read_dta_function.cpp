@@ -253,13 +253,17 @@ static void ReadDtaScan(ClientContext &context, TableFunctionInput &data, DataCh
 				auto &eidx = bind_data.col_enum_index[out_col];
 				auto eit = eidx.find(stata_val);
 				if (eit != eidx.end()) {
-					auto enum_size = EnumType::GetSize(type);
-					if (enum_size <= 256) {
+					// Match the enum's physical storage type exactly
+					switch (type.InternalType()) {
+					case PhysicalType::UINT8:
 						FlatVector::GetData<uint8_t>(vec)[row] = static_cast<uint8_t>(eit->second);
-					} else if (enum_size <= 65536) {
+						break;
+					case PhysicalType::UINT16:
 						FlatVector::GetData<uint16_t>(vec)[row] = static_cast<uint16_t>(eit->second);
-					} else {
+						break;
+					default:
 						FlatVector::GetData<uint32_t>(vec)[row] = eit->second;
+						break;
 					}
 				} else {
 					FlatVector::SetNull(vec, row, true);
@@ -349,16 +353,31 @@ static void ReadDtaScan(ClientContext &context, TableFunctionInput &data, DataCh
 				break;
 			}
 			case 32768: { // strL
-				// Read (v, o) reference from 8 bytes
-				uint32_t v_ref, o_ref_lo;
-				memcpy(&v_ref, row_ptr, 4);
-				memcpy(&o_ref_lo, row_ptr + 4, 4);
-				v_ref = reader.Swap(v_ref);
-				o_ref_lo = reader.Swap(o_ref_lo);
-				if (v_ref == 0 && o_ref_lo == 0) {
+				// The 8-byte reference splits into v+o differently per format:
+				// v(4)+o(4) in 117, v(2)+o(6) in 118/120, v(3)+o(5) in 119/121
+				auto bytes = reinterpret_cast<const uint8_t *>(row_ptr);
+				int v_bytes = reader.StrLVBytes();
+				uint64_t v_ref = 0;
+				uint64_t o_ref = 0;
+				if (reader.IsMSF()) {
+					for (int b = 0; b < v_bytes; b++) {
+						v_ref = (v_ref << 8) | bytes[b];
+					}
+					for (int b = v_bytes; b < 8; b++) {
+						o_ref = (o_ref << 8) | bytes[b];
+					}
+				} else {
+					for (int b = v_bytes - 1; b >= 0; b--) {
+						v_ref = (v_ref << 8) | bytes[b];
+					}
+					for (int b = 7; b >= v_bytes; b--) {
+						o_ref = (o_ref << 8) | bytes[b];
+					}
+				}
+				if (v_ref == 0 && o_ref == 0) {
 					FlatVector::SetNull(vec, row, true);
 				} else {
-					auto &str = reader.ResolveStrL(v_ref, o_ref_lo);
+					auto &str = reader.ResolveStrL(static_cast<uint32_t>(v_ref), o_ref);
 					FlatVector::GetData<string_t>(vec)[row] = StringVector::AddString(vec, str);
 				}
 				break;
