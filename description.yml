@@ -1,7 +1,7 @@
 extension:
   name: dta
   description: Read and write Stata .dta files (formats 117-121, Stata 13-18) with full type mapping, value labels, and strL support.
-  version: 0.1.0
+  version: 0.1.1
   language: C++
   build: cmake
   license: MIT
