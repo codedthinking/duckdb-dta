@@ -219,9 +219,22 @@ double DtaReader::SwapIfNeeded(double val) const {
 // ─── I/O helpers ────────────────────────────────────────────────────────────
 
 void DtaReader::ReadBytes(void *buf, size_t n) {
-	if (fread(buf, 1, n, fp_) != n) {
+	if (TryReadBytes(buf, n) != n) {
 		throw std::runtime_error("Unexpected end of .dta file");
 	}
+}
+
+size_t DtaReader::TryReadBytes(void *buf, size_t n) {
+	char *ptr = static_cast<char *>(buf);
+	size_t total = 0;
+	while (total < n) {
+		int64_t got = handle_->Read(ptr + total, n - total);
+		if (got <= 0) {
+			break;
+		}
+		total += static_cast<size_t>(got);
+	}
+	return total;
 }
 
 uint16_t DtaReader::ReadU16() {
@@ -261,27 +274,19 @@ void DtaReader::ReadTag(const char *expected) {
 
 // ─── Constructor ────────────────────────────────────────────────────────────
 
-DtaReader::DtaReader(const std::string &path)
-    : fp_(nullptr), file_size_(0), msf_(false), n_obs_(0), row_width_(0), data_offset_(0), strls_offset_(0),
-      value_labels_offset_(0) {
-	fp_ = fopen(path.c_str(), "rb");
-	if (!fp_) {
-		throw std::runtime_error("Cannot open .dta file: " + path);
-	}
-
-	fseek(fp_, 0, SEEK_END);
-	long end_pos = ftell(fp_);
-	file_size_ = end_pos > 0 ? static_cast<uint64_t>(end_pos) : 0;
-	fseek(fp_, 0, SEEK_SET);
+DtaReader::DtaReader(duckdb::FileSystem &fs, const std::string &path)
+    : file_size_(0), msf_(false), n_obs_(0), row_width_(0), data_offset_(0), strls_offset_(0), value_labels_offset_(0) {
+	handle_ = fs.OpenFile(path, duckdb::FileFlags::FILE_FLAGS_READ);
+	file_size_ = handle_->GetFileSize();
 
 	ParseHeader();
 	ParseMap();
 	ParseVariableTypes();
 	ParseVarnames();
 	// Skip sortlist
-	uint32_t n_vars_for_sort = static_cast<uint32_t>(columns_.size());
+	uint64_t n_vars_for_sort = columns_.size();
 	ReadTag("<sortlist>");
-	fseek(fp_, (n_vars_for_sort + 1) * params_.sortlist_entry_size, SEEK_CUR);
+	handle_->Seek(handle_->SeekPosition() + (n_vars_for_sort + 1) * params_.sortlist_entry_size);
 	ReadTag("</sortlist>");
 	ParseFormats();
 	ParseValueLabelNames();
@@ -303,9 +308,6 @@ DtaReader::DtaReader(const std::string &path)
 }
 
 DtaReader::~DtaReader() {
-	if (fp_) {
-		fclose(fp_);
-	}
 }
 
 // ─── Header parsing ─────────────────────────────────────────────────────────
@@ -369,7 +371,7 @@ void DtaReader::ParseHeader() {
 	uint8_t ts_len;
 	ReadBytes(&ts_len, 1);
 	if (ts_len > 0) {
-		fseek(fp_, ts_len, SEEK_CUR);
+		handle_->Seek(handle_->SeekPosition() + ts_len);
 	}
 	ReadTag("</timestamp>");
 
@@ -493,7 +495,7 @@ void DtaReader::ParseVariableLabels() {
 void DtaReader::SkipCharacteristics() {
 	// Use the data_offset_ from <map> to skip directly past <characteristics>
 	// data_offset_ points to "<data>", so we just seek there
-	fseek(fp_, static_cast<long>(data_offset_), SEEK_SET);
+	handle_->Seek(data_offset_);
 }
 
 // ─── Data reading ───────────────────────────────────────────────────────────
@@ -510,7 +512,7 @@ size_t DtaReader::ReadRows(uint64_t start_row, uint32_t count, std::vector<char>
 	uint64_t data_content_offset = data_offset_ + 6;
 	uint64_t byte_offset = data_content_offset + start_row * row_width_;
 
-	fseek(fp_, static_cast<long>(byte_offset), SEEK_SET);
+	handle_->Seek(byte_offset);
 
 	size_t total_bytes = static_cast<size_t>(actual) * row_width_;
 	buffer.resize(total_bytes);
@@ -521,20 +523,20 @@ size_t DtaReader::ReadRows(uint64_t start_row, uint32_t count, std::vector<char>
 // ─── strL support ───────────────────────────────────────────────────────────
 
 void DtaReader::LoadStrLs() {
-	fseek(fp_, static_cast<long>(strls_offset_), SEEK_SET);
+	handle_->Seek(strls_offset_);
 	ReadTag("<strls>");
 
 	while (true) {
 		// Try to read "GSO" or "</strls>"
 		char marker[4];
-		size_t n = fread(marker, 1, 3, fp_);
+		size_t n = TryReadBytes(marker, 3);
 		if (n < 3) {
 			break;
 		}
 
 		if (memcmp(marker, "GSO", 3) != 0) {
 			// Must be "</strls>" — seek back
-			fseek(fp_, -3, SEEK_CUR);
+			handle_->Seek(handle_->SeekPosition() - 3);
 			ReadTag("</strls>");
 			return;
 		}
@@ -559,8 +561,7 @@ void DtaReader::LoadStrLs() {
 
 		uint32_t len = ReadU32();
 
-		long strl_pos = ftell(fp_);
-		uint64_t strl_pos64 = strl_pos > 0 ? static_cast<uint64_t>(strl_pos) : 0;
+		uint64_t strl_pos64 = handle_->SeekPosition();
 		if (strl_pos64 > file_size_ || len > file_size_ - strl_pos64) {
 			throw std::runtime_error("Corrupt .dta file: strL length extends beyond end of file");
 		}
@@ -592,19 +593,19 @@ const std::string &DtaReader::ResolveStrL(uint32_t v, uint64_t o) const {
 // ─── Value labels ───────────────────────────────────────────────────────────
 
 void DtaReader::LoadValueLabels() {
-	fseek(fp_, static_cast<long>(value_labels_offset_), SEEK_SET);
+	handle_->Seek(value_labels_offset_);
 	ReadTag("<value_labels>");
 
 	while (true) {
 		// Try to read "<lbl>" or "</value_labels>"
 		char marker[6];
-		size_t n = fread(marker, 1, 5, fp_);
+		size_t n = TryReadBytes(marker, 5);
 		if (n < 5) {
 			break;
 		}
 
 		if (memcmp(marker, "<lbl>", 5) != 0) {
-			fseek(fp_, -static_cast<long>(n), SEEK_CUR);
+			handle_->Seek(handle_->SeekPosition() - n);
 			ReadTag("</value_labels>");
 			return;
 		}
@@ -616,14 +617,13 @@ void DtaReader::LoadValueLabels() {
 		std::string labname = ReadFixedString(params_.label_name_len);
 
 		// 3 bytes padding
-		fseek(fp_, 3, SEEK_CUR);
+		handle_->Seek(handle_->SeekPosition() + 3);
 
 		// value_label_table: n(4), txtlen(4), off[n](4*n), val[n](4*n), txt[txtlen]
 		uint32_t n_entries = ReadU32();
 		uint32_t txtlen = ReadU32();
 
-		long lbl_pos = ftell(fp_);
-		uint64_t lbl_pos64 = lbl_pos > 0 ? static_cast<uint64_t>(lbl_pos) : 0;
+		uint64_t lbl_pos64 = handle_->SeekPosition();
 		uint64_t remaining = file_size_ > lbl_pos64 ? file_size_ - lbl_pos64 : 0;
 		if (n_entries > remaining / 8 || txtlen > remaining - static_cast<uint64_t>(n_entries) * 8) {
 			throw std::runtime_error("Corrupt .dta file: value label table extends beyond end of file");

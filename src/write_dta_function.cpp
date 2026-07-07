@@ -196,7 +196,8 @@ static unique_ptr<GlobalFunctionData> WriteDtaInitGlobal(ClientContext &context,
 	auto &bdata = bind_data.Cast<WriteDtaBindData>();
 	auto gstate = make_uniq<WriteDtaGlobalState>();
 
-	gstate->writer = make_uniq<dta::DtaWriter>(file_path, bdata.columns, bdata.dataset_label);
+	auto &fs = FileSystem::GetFileSystem(context);
+	gstate->writer = make_uniq<dta::DtaWriter>(fs, file_path, bdata.columns, bdata.dataset_label);
 	gstate->writer->WriteMetadata();
 
 	// Register value labels

@@ -1,7 +1,8 @@
 #pragma once
 
+#include "duckdb/common/file_system.hpp"
+
 #include <cstdint>
-#include <cstdio>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -30,7 +31,7 @@ struct StrLEntry {
 
 class DtaWriter {
 public:
-	DtaWriter(const std::string &path, const std::vector<DtaWriteColumn> &columns,
+	DtaWriter(duckdb::FileSystem &fs, const std::string &path, const std::vector<DtaWriteColumn> &columns,
 	          const std::string &dataset_label = "");
 	~DtaWriter();
 
@@ -54,7 +55,7 @@ public:
 	}
 
 private:
-	FILE *fp_;
+	duckdb::unique_ptr<duckdb::FileHandle> handle_;
 	std::vector<DtaWriteColumn> columns_;
 	std::string dataset_label_;
 	uint32_t row_width_;
@@ -66,6 +67,7 @@ private:
 	std::vector<StrLEntry> strl_entries_;
 	std::vector<WriterValueLabel> value_labels_;
 
+	void WriteBytes(const void *buf, size_t n);
 	void WriteTag(const char *tag);
 	void WriteFixed(const std::string &s, uint32_t len);
 	void WriteU16(uint16_t v);

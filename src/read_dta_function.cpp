@@ -142,8 +142,9 @@ static unique_ptr<FunctionData> ReadDtaBind(ClientContext &context, TableFunctio
 		}
 	}
 
-	// Open reader
-	result->reader = make_shared_ptr<dta::DtaReader>(result->file_path);
+	// Open reader through DuckDB's virtual filesystem (httpfs, WASM, etc.)
+	auto &fs = FileSystem::GetFileSystem(context);
+	result->reader = make_shared_ptr<dta::DtaReader>(fs, result->file_path);
 	auto &reader = *result->reader;
 
 	// Load value labels if needed

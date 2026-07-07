@@ -11,7 +11,7 @@ require dta
 statement error
 SELECT * FROM read_dta('nonexistent.dta')
 ----
-Cannot open .dta file
+Cannot open file
 
 # ============================================================
 # Non-dta file (read a text file)

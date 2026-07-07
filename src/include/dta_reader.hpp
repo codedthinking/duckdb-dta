@@ -1,7 +1,8 @@
 #pragma once
 
+#include "duckdb/common/file_system.hpp"
+
 #include <cstdint>
-#include <cstdio>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -49,7 +50,7 @@ struct DtaMissing {
 
 class DtaReader {
 public:
-	explicit DtaReader(const std::string &path);
+	DtaReader(duckdb::FileSystem &fs, const std::string &path);
 	~DtaReader();
 
 	// Metadata (available after construction)
@@ -98,7 +99,7 @@ public:
 	}
 
 private:
-	FILE *fp_;
+	duckdb::unique_ptr<duckdb::FileHandle> handle_;
 	uint64_t file_size_;
 	DtaVersionParams params_;
 	bool msf_;
@@ -127,6 +128,7 @@ private:
 	T SwapIfNeeded(T val) const;
 	void ReadTag(const char *expected);
 	void ReadBytes(void *buf, size_t n);
+	size_t TryReadBytes(void *buf, size_t n);
 	uint16_t ReadU16();
 	uint32_t ReadU32();
 	uint64_t ReadU64();
