@@ -301,14 +301,110 @@ def generate_strl_file():
     print(f"  Written {path} (format 118 with strLs)")
 
 
+def generate_latin1_file():
+    """Generate a format 117 .dta file with Latin-1 encoded strings.
+
+    Format 117 predates Stata's UTF-8 support; strings are stored in the
+    writing machine's ANSI code page (Latin-1 here, following pandas).
+    """
+    df_latin1 = pd.DataFrame(
+        {
+            "id": pd.array([1, 2, 3], dtype="int32"),
+            "name": ["café", "naïve", "plain"],
+        }
+    )
+    path = os.path.join(OUT_DIR, "latin1_117.dta")
+    writer = pd.io.stata.StataWriter117(path, df_latin1, write_index=False)
+    writer.write_file()
+    print(f"  Written {path} (format 117 with Latin-1 strings)")
+
+
+def generate_int_date_file():
+    """Generate a .dta file whose %td date columns are stored as integers.
+
+    Stata commonly stores %td dates in int/long variables, not just double
+    (pandas always writes them as double, so this file is built manually).
+    """
+    from datetime import date
+
+    columns = [
+        ("id", 65528, 4, "%12.0g"),  # long
+        ("d_long", 65528, 4, "%td"),  # long %td
+        ("d_int", 65529, 2, "%td"),  # int %td
+    ]
+
+    epoch = date(1960, 1, 1)
+    dates = [date(1960, 1, 1), date(2024, 6, 15), date(1959, 12, 25)]
+    rows = []
+    for i, d in enumerate(dates):
+        days = (d - epoch).days
+        rows.append(struct.pack("<iih", i + 1, days, days))
+
+    path = os.path.join(OUT_DIR, "int_dates.dta")
+    write_dta_binary(path, 118, rows, columns)
+
+
+def generate_legacy_formats():
+    """Generate legacy (pre-XML) format files 114 and 115.
+
+    pandas writes format 114; format 115 (Stata 12) has a byte-identical
+    layout, so it is produced by patching the format byte on a second 114
+    file, which also carries Latin-1 content to exercise transcoding.
+    """
+    path114 = os.path.join(OUT_DIR, "format_114.dta")
+    df.to_stata(path114, write_index=False, version=114)
+    print(f"  Written {path114} (format 114)")
+
+    df_115 = pd.DataFrame(
+        {
+            "id": pd.array([1, 2, 3], dtype="int32"),
+            "name": ["café", "naïve", "plain"],
+            "score": [95.5, 87.3, 91.0],
+        }
+    )
+    path115 = os.path.join(OUT_DIR, "format_115.dta")
+    df_115.to_stata(path115, write_index=False, version=114)
+    with open(path115, "r+b") as f:
+        assert f.read(1) == bytes([114])
+        f.seek(0)
+        f.write(bytes([115]))
+    print(f"  Written {path115} (format 115, patched from 114 layout)")
+
+    # Value labels in a legacy file
+    df_labels = pd.DataFrame(
+        {
+            "gender": pd.array([1, 2, 1, 2, 1], dtype="int8"),
+            "region": pd.array([1, 1, 2, 3, 3], dtype="int8"),
+        }
+    )
+    path_vl = os.path.join(OUT_DIR, "value_labels_114.dta")
+    writer = pd.io.stata.StataWriter(
+        path_vl,
+        df_labels,
+        write_index=False,
+        value_labels={
+            "gender": {1: "Male", 2: "Female"},
+            "region": {1: "North", 2: "South", 3: "East"},
+        },
+    )
+    writer.write_file()
+    print(f"  Written {path_vl} (format 114 with value labels)")
+
+
 if __name__ == "__main__":
     os.makedirs(OUT_DIR, exist_ok=True)
     print("Generating pandas format files (117-119)...")
     generate_pandas_formats()
+    print("Generating legacy format files (114-115)...")
+    generate_legacy_formats()
     print("Generating binary format files (120-121)...")
     generate_binary_formats()
     print("Generating value labels file...")
     generate_value_labels_file()
     print("Generating strL file...")
     generate_strl_file()
+    print("Generating Latin-1 file...")
+    generate_latin1_file()
+    print("Generating integer-date file...")
+    generate_int_date_file()
     print("Done!")

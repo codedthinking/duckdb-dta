@@ -183,8 +183,14 @@ void DtaWriter::WriteRowData(const char *data, size_t n_bytes) {
 
 // ─── StrL ───────────────────────────────────────────────────────────────────
 
-void DtaWriter::AddStrL(uint32_t v, uint64_t o, const std::string &value) {
-	strl_entries_.push_back({v, o, value});
+StrLRef DtaWriter::AddStrL(uint32_t v, uint64_t o, const std::string &value) {
+	auto it = strl_map_.find(value);
+	if (it != strl_map_.end()) {
+		return it->second;
+	}
+	auto inserted = strl_map_.emplace(value, StrLRef {v, o});
+	strl_order_.push_back(&*inserted.first);
+	return StrLRef {v, o};
 }
 
 // ─── Value labels ───────────────────────────────────────────────────────────
@@ -202,15 +208,17 @@ void DtaWriter::Finalize(uint64_t total_obs) {
 	// <strls>
 	offsets_[10] = handle_->SeekPosition();
 	WriteTag("<strls>");
-	for (auto &entry : strl_entries_) {
+	for (auto entry : strl_order_) {
+		auto &value = entry->first;
+		auto &ref = entry->second;
 		WriteTag("GSO");
-		WriteU32(entry.v);
-		WriteU64(entry.o);
+		WriteU32(ref.v);
+		WriteU64(ref.o);
 		uint8_t t = 130; // ASCII/UTF-8
 		WriteBytes(&t, 1);
-		uint32_t len = static_cast<uint32_t>(entry.value.size() + 1); // include null terminator
+		uint32_t len = static_cast<uint32_t>(value.size() + 1); // include null terminator
 		WriteU32(len);
-		WriteBytes(entry.value.data(), entry.value.size());
+		WriteBytes(value.data(), value.size());
 		WriteBytes("\0", 1); // null terminator
 	}
 	WriteTag("</strls>");

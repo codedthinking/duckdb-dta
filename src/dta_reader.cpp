@@ -10,12 +10,52 @@ namespace dta {
 
 const std::string DtaReader::empty_strl_;
 
+// ─── Latin-1 → UTF-8 (pre-118 format strings) ──────────────────────────────
+
+bool NeedsUtf8Transcode(const char *data, size_t len) {
+	for (size_t i = 0; i < len; i++) {
+		if (static_cast<unsigned char>(data[i]) >= 0x80) {
+			return true;
+		}
+	}
+	return false;
+}
+
+std::string Latin1ToUtf8(const char *data, size_t len) {
+	std::string out;
+	out.reserve(len * 2);
+	for (size_t i = 0; i < len; i++) {
+		unsigned char c = static_cast<unsigned char>(data[i]);
+		if (c < 0x80) {
+			out.push_back(static_cast<char>(c));
+		} else {
+			out.push_back(static_cast<char>(0xC0 | (c >> 6)));
+			out.push_back(static_cast<char>(0x80 | (c & 0x3F)));
+		}
+	}
+	return out;
+}
+
 // ─── Version params ─────────────────────────────────────────────────────────
 
 DtaVersionParams DtaVersionParams::ForVersion(int version) {
 	DtaVersionParams p;
 	p.version = version;
 	switch (version) {
+	case 113:
+	case 114:
+	case 115:
+		// Legacy (pre-XML) layout: Stata 8-12
+		p.varname_len = 33;
+		p.sortlist_entry_size = 2;
+		p.fmt_len = (version == 113) ? 12 : 49;
+		p.label_name_len = 33;
+		p.var_label_len = 81;
+		p.k_field_size = 2;
+		p.n_field_size = 4;
+		p.dataset_label_len_size = 0; // fixed 81-byte field, no length prefix
+		p.has_alias_vars = false;
+		break;
 	case 117:
 		p.varname_len = 33;
 		p.sortlist_entry_size = 2;
@@ -130,6 +170,28 @@ uint16_t DtaTypeByteWidth(uint16_t type_code) {
 		return 1; // byte
 	default:
 		throw std::runtime_error("Unknown .dta type code: " + std::to_string(type_code));
+	}
+}
+
+// Legacy (113-115) one-byte type codes, translated to the modern equivalents
+// so the rest of the reader is version-agnostic
+static uint16_t TranslateLegacyType(uint8_t type_code) {
+	if (type_code >= 1 && type_code <= 244) {
+		return type_code; // str# has width = #
+	}
+	switch (type_code) {
+	case 251:
+		return 65530; // byte
+	case 252:
+		return 65529; // int
+	case 253:
+		return 65528; // long
+	case 254:
+		return 65527; // float
+	case 255:
+		return 65526; // double
+	default:
+		throw std::runtime_error("Unknown legacy .dta type code: " + std::to_string(type_code));
 	}
 }
 
@@ -260,7 +322,11 @@ std::string DtaReader::ReadFixedString(uint32_t len) {
 	ReadBytes(buf.data(), len);
 	// Find null terminator
 	auto end = std::find(buf.begin(), buf.end(), '\0');
-	return std::string(buf.begin(), end);
+	std::string result(buf.begin(), end);
+	if (params_.version < 118 && NeedsUtf8Transcode(result.data(), result.size())) {
+		return Latin1ToUtf8(result.data(), result.size());
+	}
+	return result;
 }
 
 void DtaReader::ReadTag(const char *expected) {
@@ -279,19 +345,32 @@ DtaReader::DtaReader(duckdb::FileSystem &fs, const std::string &path)
 	handle_ = fs.OpenFile(path, duckdb::FileFlags::FILE_FLAGS_READ);
 	file_size_ = handle_->GetFileSize();
 
-	ParseHeader();
-	ParseMap();
-	ParseVariableTypes();
-	ParseVarnames();
-	// Skip sortlist
-	uint64_t n_vars_for_sort = columns_.size();
-	ReadTag("<sortlist>");
-	handle_->Seek(handle_->SeekPosition() + (n_vars_for_sort + 1) * params_.sortlist_entry_size);
-	ReadTag("</sortlist>");
-	ParseFormats();
-	ParseValueLabelNames();
-	ParseVariableLabels();
-	SkipCharacteristics();
+	// Formats 117+ start with an XML-style tag; 113-115 start with the
+	// format number as a single byte
+	uint8_t first_byte;
+	ReadBytes(&first_byte, 1);
+	handle_->Seek(0);
+
+	if (first_byte == '<') {
+		ParseHeader();
+		ParseMap();
+		ParseVariableTypes();
+		ParseVarnames();
+		// Skip sortlist
+		uint64_t n_vars_for_sort = columns_.size();
+		ReadTag("<sortlist>");
+		handle_->Seek(handle_->SeekPosition() + (n_vars_for_sort + 1) * params_.sortlist_entry_size);
+		ReadTag("</sortlist>");
+		ParseFormats();
+		ParseValueLabelNames();
+		ParseVariableLabels();
+		SkipCharacteristics();
+	} else {
+		params_ = DtaVersionParams::ForVersion(first_byte);
+		ParseLegacyHeader();
+		ParseLegacyDescriptors();
+		SkipExpansionFields(); // leaves data_offset_ at the row data
+	}
 
 	// Compute row width
 	uint64_t width = 0;
@@ -299,12 +378,17 @@ DtaReader::DtaReader(duckdb::FileSystem &fs, const std::string &path)
 		width += col.byte_width;
 	}
 
-	// The declared observations must fit between <data> and end of file
-	if (data_offset_ > file_size_ || file_size_ - data_offset_ < 6 || width > std::numeric_limits<uint32_t>::max() ||
-	    (width > 0 && n_obs_ > (file_size_ - data_offset_ - 6) / width)) {
+	// The declared observations must fit between the data offset and end of file
+	if (data_offset_ > file_size_ || width > std::numeric_limits<uint32_t>::max() ||
+	    (width > 0 && n_obs_ > (file_size_ - data_offset_) / width)) {
 		throw std::runtime_error("Corrupt .dta file: data section extends beyond end of file");
 	}
 	row_width_ = static_cast<uint32_t>(width);
+
+	if (params_.version < 117) {
+		// Legacy files have no map; value labels follow the data directly
+		value_labels_offset_ = data_offset_ + n_obs_ * row_width_;
+	}
 }
 
 DtaReader::~DtaReader() {
@@ -363,6 +447,9 @@ void DtaReader::ParseHeader() {
 	if (label_len > 0) {
 		dataset_label_.resize(label_len);
 		ReadBytes(&dataset_label_[0], label_len);
+		if (params_.version < 118 && NeedsUtf8Transcode(dataset_label_.data(), dataset_label_.size())) {
+			dataset_label_ = Latin1ToUtf8(dataset_label_.data(), dataset_label_.size());
+		}
 	}
 	ReadTag("</label>");
 
@@ -389,6 +476,86 @@ void DtaReader::ParseHeader() {
 	columns_.resize(n_vars);
 }
 
+// ─── Legacy (113-115) header parsing ────────────────────────────────────────
+
+void DtaReader::ParseLegacyHeader() {
+	// ds_format(1), byteorder(1: 0x01=MSF, 0x02=LSF), filetype(1), unused(1)
+	uint8_t header_bytes[4];
+	ReadBytes(header_bytes, 4);
+	msf_ = (header_bytes[1] == 0x01);
+
+	uint32_t n_vars = ReadU16();
+	n_obs_ = ReadU32();
+
+	// Dataset label (fixed 81 bytes) and timestamp (fixed 18 bytes)
+	dataset_label_ = ReadFixedString(81);
+	handle_->Seek(handle_->SeekPosition() + 18);
+
+	// Each variable needs at least this much metadata (type code, name, format,
+	// value-label name, variable label), so a valid K is bounded by file size
+	uint64_t min_bytes_per_var =
+	    1ULL + params_.varname_len + params_.fmt_len + params_.label_name_len + params_.var_label_len;
+	if (static_cast<uint64_t>(n_vars) * min_bytes_per_var > file_size_) {
+		throw std::runtime_error("Corrupt .dta file: variable count " + std::to_string(n_vars) + " exceeds file size");
+	}
+
+	columns_.resize(n_vars);
+}
+
+void DtaReader::ParseLegacyDescriptors() {
+	// typlist: one byte per variable
+	std::vector<uint8_t> raw_types(columns_.size());
+	if (!raw_types.empty()) {
+		ReadBytes(raw_types.data(), raw_types.size());
+	}
+	for (size_t i = 0; i < columns_.size(); i++) {
+		columns_[i].type_code = TranslateLegacyType(raw_types[i]);
+		columns_[i].byte_width = DtaTypeByteWidth(columns_[i].type_code);
+	}
+
+	// varlist
+	for (auto &col : columns_) {
+		col.name = ReadFixedString(params_.varname_len);
+	}
+
+	// srtlist: (nvar + 1) 2-byte entries
+	handle_->Seek(handle_->SeekPosition() + (columns_.size() + 1) * params_.sortlist_entry_size);
+
+	// fmtlist
+	for (auto &col : columns_) {
+		col.format = ReadFixedString(params_.fmt_len);
+	}
+
+	// lbllist
+	for (auto &col : columns_) {
+		col.value_label_name = ReadFixedString(params_.label_name_len);
+	}
+
+	// variable labels
+	for (auto &col : columns_) {
+		col.label = ReadFixedString(params_.var_label_len);
+	}
+}
+
+void DtaReader::SkipExpansionFields() {
+	// Sequence of {data_type(1), len(4), contents}, terminated by a
+	// data_type of 0 with len 0
+	while (true) {
+		uint8_t data_type;
+		ReadBytes(&data_type, 1);
+		uint32_t len = ReadU32();
+		if (data_type == 0 && len == 0) {
+			break;
+		}
+		uint64_t pos = handle_->SeekPosition();
+		if (pos > file_size_ || len > file_size_ - pos) {
+			throw std::runtime_error("Corrupt .dta file: expansion field extends beyond end of file");
+		}
+		handle_->Seek(pos + len);
+	}
+	data_offset_ = handle_->SeekPosition();
+}
+
 // ─── Map ────────────────────────────────────────────────────────────────────
 
 void DtaReader::ParseMap() {
@@ -400,7 +567,7 @@ void DtaReader::ParseMap() {
 	ReadTag("</map>");
 
 	// offsets[9] = <data>, offsets[10] = <strls>, offsets[11] = <value_labels>
-	data_offset_ = offsets[9];
+	data_offset_ = offsets[9] + 6; // skip past the "<data>" tag to the row data
 	strls_offset_ = offsets[10];
 	value_labels_offset_ = offsets[11];
 }
@@ -415,18 +582,9 @@ void DtaReader::ParseVariableTypes() {
 	}
 	ReadTag("</variable_types>");
 
-	// Filter out alias variables (type 65525) for formats 120/121
+	// Alias variables (type 65525, formats 120/121) carry no data; they are
+	// kept through metadata parsing and filtered out in ParseVariableLabels
 	if (params_.has_alias_vars) {
-		std::vector<DtaColumn> filtered;
-		for (size_t i = 0; i < raw_types.size(); i++) {
-			if (raw_types[i] != 65525) {
-				columns_[i].type_code = raw_types[i];
-				columns_[i].byte_width = DtaTypeByteWidth(raw_types[i]);
-				filtered.push_back(columns_[i]);
-			}
-		}
-		// We need to track original indices for varnames/formats/labels parsing
-		// For now, store all columns then filter after all metadata is parsed
 		for (size_t i = 0; i < columns_.size(); i++) {
 			columns_[i].type_code = raw_types[i];
 			columns_[i].byte_width = (raw_types[i] == 65525) ? 0 : DtaTypeByteWidth(raw_types[i]);
@@ -493,8 +651,7 @@ void DtaReader::ParseVariableLabels() {
 // ─── Characteristics (skip) ─────────────────────────────────────────────────
 
 void DtaReader::SkipCharacteristics() {
-	// Use the data_offset_ from <map> to skip directly past <characteristics>
-	// data_offset_ points to "<data>", so we just seek there
+	// Use the data offset from <map> to skip directly past <characteristics>
 	handle_->Seek(data_offset_);
 }
 
@@ -506,17 +663,17 @@ size_t DtaReader::ReadRows(uint64_t start_row, uint32_t count, std::vector<char>
 	}
 	uint32_t actual = static_cast<uint32_t>(std::min(static_cast<uint64_t>(count), n_obs_ - start_row));
 
-	// Seek past <data> tag to the actual data content
-	// data_offset_ points to the start of "<data>"
-	// "<data>" is 6 bytes
-	uint64_t data_content_offset = data_offset_ + 6;
-	uint64_t byte_offset = data_content_offset + start_row * row_width_;
-
-	handle_->Seek(byte_offset);
+	uint64_t byte_offset = data_offset_ + start_row * row_width_;
 
 	size_t total_bytes = static_cast<size_t>(actual) * row_width_;
 	buffer.resize(total_bytes);
-	ReadBytes(buffer.data(), total_bytes);
+	// Positional read: no shared seek state, so concurrent scans are safe
+	if (handle_->OnDiskFile()) {
+		handle_->Read(buffer.data(), total_bytes, byte_offset);
+	} else {
+		std::lock_guard<std::mutex> guard(io_mutex_);
+		handle_->Read(buffer.data(), total_bytes, byte_offset);
+	}
 	return actual;
 }
 
@@ -577,9 +734,15 @@ void DtaReader::LoadStrLs() {
 		if (len > 0) {
 			ReadBytes(&content[0], len);
 		}
-		// Remove trailing null if present
-		if (!content.empty() && content.back() == '\0') {
-			content.pop_back();
+		if (t == 130) {
+			// ASCII/UTF-8 strLs include a trailing NUL in len; binary
+			// strLs (t=129) must keep every byte
+			if (!content.empty() && content.back() == '\0') {
+				content.pop_back();
+			}
+			if (params_.version < 118 && NeedsUtf8Transcode(content.data(), content.size())) {
+				content = Latin1ToUtf8(content.data(), content.size());
+			}
 		}
 
 		strl_table_[StrLKey(v, o)] = std::move(content);
@@ -596,7 +759,71 @@ const std::string &DtaReader::ResolveStrL(uint32_t v, uint64_t o) const {
 
 // ─── Value labels ───────────────────────────────────────────────────────────
 
+void DtaReader::ReadValueLabelTable() {
+	// labname (label_name_len bytes, null-terminated)
+	std::string labname = ReadFixedString(params_.label_name_len);
+
+	// 3 bytes padding
+	handle_->Seek(handle_->SeekPosition() + 3);
+
+	// value_label_table: n(4), txtlen(4), off[n](4*n), val[n](4*n), txt[txtlen]
+	uint32_t n_entries = ReadU32();
+	uint32_t txtlen = ReadU32();
+
+	uint64_t lbl_pos64 = handle_->SeekPosition();
+	uint64_t remaining = file_size_ > lbl_pos64 ? file_size_ - lbl_pos64 : 0;
+	if (n_entries > remaining / 8 || txtlen > remaining - static_cast<uint64_t>(n_entries) * 8) {
+		throw std::runtime_error("Corrupt .dta file: value label table extends beyond end of file");
+	}
+
+	std::vector<uint32_t> off(n_entries);
+	for (uint32_t i = 0; i < n_entries; i++) {
+		off[i] = ReadU32();
+	}
+
+	std::vector<int32_t> val(n_entries);
+	for (uint32_t i = 0; i < n_entries; i++) {
+		int32_t v;
+		ReadBytes(&v, 4);
+		val[i] = SwapIfNeeded(v);
+	}
+
+	std::vector<char> txt(txtlen);
+	if (txtlen > 0) {
+		ReadBytes(txt.data(), txtlen);
+	}
+
+	DtaValueLabel vl;
+	vl.name = labname;
+	for (uint32_t i = 0; i < n_entries; i++) {
+		if (off[i] < txtlen) {
+			// The text blob may lack a terminating NUL; never scan past it
+			const char *base = txt.data() + off[i];
+			std::string label(base, strnlen(base, txtlen - off[i]));
+			if (params_.version < 118 && NeedsUtf8Transcode(label.data(), label.size())) {
+				label = Latin1ToUtf8(label.data(), label.size());
+			}
+			vl.mappings[val[i]] = std::move(label);
+		}
+	}
+
+	value_labels_.push_back(std::move(vl));
+}
+
 void DtaReader::LoadValueLabels() {
+	if (params_.version < 117) {
+		// Legacy: value label tables follow the data and repeat until EOF,
+		// each prefixed by a 4-byte table length (unused here)
+		handle_->Seek(value_labels_offset_);
+		while (true) {
+			char len_buf[4];
+			if (TryReadBytes(len_buf, 4) < 4) {
+				return;
+			}
+			ReadValueLabelTable();
+		}
+	}
+
 	handle_->Seek(value_labels_offset_);
 	ReadTag("<value_labels>");
 
@@ -615,53 +842,9 @@ void DtaReader::LoadValueLabels() {
 		}
 
 		// len (4 bytes) — total length of what follows until </lbl>
-		uint32_t total_len = ReadU32();
+		ReadU32();
 
-		// labname (label_name_len bytes, null-terminated)
-		std::string labname = ReadFixedString(params_.label_name_len);
-
-		// 3 bytes padding
-		handle_->Seek(handle_->SeekPosition() + 3);
-
-		// value_label_table: n(4), txtlen(4), off[n](4*n), val[n](4*n), txt[txtlen]
-		uint32_t n_entries = ReadU32();
-		uint32_t txtlen = ReadU32();
-
-		uint64_t lbl_pos64 = handle_->SeekPosition();
-		uint64_t remaining = file_size_ > lbl_pos64 ? file_size_ - lbl_pos64 : 0;
-		if (n_entries > remaining / 8 || txtlen > remaining - static_cast<uint64_t>(n_entries) * 8) {
-			throw std::runtime_error("Corrupt .dta file: value label table extends beyond end of file");
-		}
-
-		std::vector<uint32_t> off(n_entries);
-		for (uint32_t i = 0; i < n_entries; i++) {
-			off[i] = ReadU32();
-		}
-
-		std::vector<int32_t> val(n_entries);
-		for (uint32_t i = 0; i < n_entries; i++) {
-			int32_t v;
-			ReadBytes(&v, 4);
-			val[i] = SwapIfNeeded(v);
-		}
-
-		std::vector<char> txt(txtlen);
-		if (txtlen > 0) {
-			ReadBytes(txt.data(), txtlen);
-		}
-
-		DtaValueLabel vl;
-		vl.name = labname;
-		for (uint32_t i = 0; i < n_entries; i++) {
-			if (off[i] < txtlen) {
-				// The text blob may lack a terminating NUL; never scan past it
-				const char *base = txt.data() + off[i];
-				std::string label(base, strnlen(base, txtlen - off[i]));
-				vl.mappings[val[i]] = std::move(label);
-			}
-		}
-
-		value_labels_.push_back(std::move(vl));
+		ReadValueLabelTable();
 
 		ReadTag("</lbl>");
 	}
