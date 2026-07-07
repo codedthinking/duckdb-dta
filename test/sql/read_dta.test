@@ -88,4 +88,4 @@ SELECT length(name) FROM read_dta('test/data/auto.dta') WHERE id = 2
 statement error
 SELECT * FROM read_dta('nonexistent.dta')
 ----
-Cannot open .dta file
+Cannot open file
