@@ -10,6 +10,7 @@
 #include "duckdb/planner/expression/bound_conjunction_expression.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/table_filter.hpp"
+#include "duckdb/planner/table_filter_set.hpp"
 
 #include <cstring>
 #include <mutex>
@@ -108,7 +109,7 @@ static LogicalType MapDtaType(const dta::DtaColumn &col, bool apply_value_labels
 		vector<pair<int32_t, string>> sorted_pairs(vl->mappings.begin(), vl->mappings.end());
 		std::sort(sorted_pairs.begin(), sorted_pairs.end());
 		Vector enum_strings(LogicalType::VARCHAR, sorted_pairs.size());
-		auto str_data = FlatVector::GetData<string_t>(enum_strings);
+		auto str_data = FlatVector::GetDataMutable<string_t>(enum_strings);
 		for (idx_t i = 0; i < sorted_pairs.size(); i++) {
 			str_data[i] = StringVector::AddString(enum_strings, sorted_pairs[i].second);
 		}
@@ -142,7 +143,7 @@ static LogicalType MapDtaType(const dta::DtaColumn &col, bool apply_value_labels
 // ─── Bind ───────────────────────────────────────────────────────────────────
 
 static unique_ptr<FunctionData> ReadDtaBind(ClientContext &context, TableFunctionBindInput &input,
-                                            vector<LogicalType> &return_types, vector<string> &names) {
+                                            vector<LogicalType> &return_types, vector<Identifier> &names) {
 	auto result = make_uniq<ReadDtaBindData>();
 
 	result->file_path = input.inputs[0].GetValue<string>();
@@ -150,7 +151,7 @@ static unique_ptr<FunctionData> ReadDtaBind(ClientContext &context, TableFunctio
 	// Parse named parameters
 	result->apply_value_labels = false;
 	for (auto &kv : input.named_parameters) {
-		if (kv.first == "value_labels") {
+		if (kv.first.GetIdentifierName() == "value_labels") {
 			result->apply_value_labels = kv.second.GetValue<bool>();
 		}
 	}
@@ -195,7 +196,8 @@ static unique_ptr<FunctionData> ReadDtaBind(ClientContext &context, TableFunctio
 
 		LogicalType type = MapDtaType(cols[i], result->apply_value_labels, vl);
 		return_types.push_back(type);
-		names.push_back(cols[i].name);
+		names.emplace_back(cols[i].name);
+		result->return_names.push_back(cols[i].name);
 		result->col_offsets.push_back(running_offset);
 		running_offset += cols[i].byte_width;
 		result->col_value_labels.push_back(vl);
@@ -213,7 +215,6 @@ static unique_ptr<FunctionData> ReadDtaBind(ClientContext &context, TableFunctio
 	}
 
 	result->return_types = return_types;
-	result->return_names = names;
 	return std::move(result);
 }
 
@@ -229,19 +230,16 @@ static unique_ptr<GlobalTableFunctionState> ReadDtaInit(ClientContext &context, 
 	// output chunk (filter keys are relative indexes into column_ids)
 	if (input.filters) {
 		vector<unique_ptr<Expression>> conjuncts;
-		for (auto &entry : input.filters->filters) {
-			idx_t out_idx = entry.first;
+		for (auto &entry : *input.filters) {
+			idx_t out_idx = entry.GetIndex().GetIndex();
 			column_t col_id = input.column_ids[out_idx];
 			auto type = IsRowIdColumnId(col_id) ? LogicalType(LogicalType::BIGINT) : bind_data.return_types[col_id];
 			BoundReferenceExpression col_ref(std::move(type), out_idx);
-			conjuncts.push_back(entry.second->ToExpression(col_ref));
+			conjuncts.push_back(entry.Filter().ToExpression(col_ref));
 		}
-		if (conjuncts.size() == 1) {
-			gstate->filter_expr = std::move(conjuncts[0]);
-		} else if (!conjuncts.empty()) {
-			auto conjunction = make_uniq<BoundConjunctionExpression>(ExpressionType::CONJUNCTION_AND);
-			conjunction->children = std::move(conjuncts);
-			gstate->filter_expr = std::move(conjunction);
+		if (!conjuncts.empty()) {
+			gstate->filter_expr =
+			    BoundConjunctionExpression::Create(ExpressionType::CONJUNCTION_AND, std::move(conjuncts));
 		}
 	}
 	return std::move(gstate);
@@ -283,7 +281,7 @@ static void ReadDtaScan(ClientContext &context, TableFunctionInput &data, DataCh
 			lock_guard<mutex> guard(gstate.lock);
 			uint64_t n_obs = reader.NumObs();
 			if (gstate.next_row >= n_obs) {
-				output.SetCardinality(0);
+				output.SetChildCardinality(0);
 				return;
 			}
 			start = gstate.next_row;
@@ -304,7 +302,7 @@ static void ReadDtaScan(ClientContext &context, TableFunctionInput &data, DataCh
 		if (needs_data) {
 			actual = reader.ReadRows(start, count, lstate.row_buffer);
 			if (actual == 0) {
-				output.SetCardinality(0);
+				output.SetChildCardinality(0);
 				return;
 			}
 		}
@@ -318,7 +316,7 @@ static void ReadDtaScan(ClientContext &context, TableFunctionInput &data, DataCh
 			auto &vec = output.data[out_col];
 			column_t col_id = gstate.column_ids[out_col];
 			if (IsRowIdColumnId(col_id)) {
-				auto row_ids = FlatVector::GetData<row_t>(vec);
+				auto row_ids = FlatVector::GetDataMutable<row_t>(vec);
 				for (idx_t row = 0; row < actual; row++) {
 					row_ids[row] = static_cast<row_t>(start + row);
 				}
@@ -341,13 +339,13 @@ static void ReadDtaScan(ClientContext &context, TableFunctionInput &data, DataCh
 						// Match the enum's physical storage type exactly
 						switch (type.InternalType()) {
 						case PhysicalType::UINT8:
-							FlatVector::GetData<uint8_t>(vec)[row] = static_cast<uint8_t>(eit->second);
+							FlatVector::GetDataMutable<uint8_t>(vec)[row] = static_cast<uint8_t>(eit->second);
 							break;
 						case PhysicalType::UINT16:
-							FlatVector::GetData<uint16_t>(vec)[row] = static_cast<uint16_t>(eit->second);
+							FlatVector::GetDataMutable<uint16_t>(vec)[row] = static_cast<uint16_t>(eit->second);
 							break;
 						default:
-							FlatVector::GetData<uint32_t>(vec)[row] = eit->second;
+							FlatVector::GetDataMutable<uint32_t>(vec)[row] = eit->second;
 							break;
 						}
 					} else {
@@ -366,9 +364,9 @@ static void ReadDtaScan(ClientContext &context, TableFunctionInput &data, DataCh
 					} else if (is_enum) {
 						write_enum(val);
 					} else if (type.id() == LogicalTypeId::DATE) {
-						FlatVector::GetData<date_t>(vec)[row] = date_t(val - STATA_EPOCH_OFFSET);
+						FlatVector::GetDataMutable<date_t>(vec)[row] = date_t(val - STATA_EPOCH_OFFSET);
 					} else {
-						FlatVector::GetData<int8_t>(vec)[row] = val;
+						FlatVector::GetDataMutable<int8_t>(vec)[row] = val;
 					}
 					break;
 				}
@@ -381,9 +379,9 @@ static void ReadDtaScan(ClientContext &context, TableFunctionInput &data, DataCh
 					} else if (is_enum) {
 						write_enum(val);
 					} else if (type.id() == LogicalTypeId::DATE) {
-						FlatVector::GetData<date_t>(vec)[row] = date_t(val - STATA_EPOCH_OFFSET);
+						FlatVector::GetDataMutable<date_t>(vec)[row] = date_t(val - STATA_EPOCH_OFFSET);
 					} else {
-						FlatVector::GetData<int16_t>(vec)[row] = val;
+						FlatVector::GetDataMutable<int16_t>(vec)[row] = val;
 					}
 					break;
 				}
@@ -396,9 +394,9 @@ static void ReadDtaScan(ClientContext &context, TableFunctionInput &data, DataCh
 					} else if (is_enum) {
 						write_enum(val);
 					} else if (type.id() == LogicalTypeId::DATE) {
-						FlatVector::GetData<date_t>(vec)[row] = date_t(val - STATA_EPOCH_OFFSET);
+						FlatVector::GetDataMutable<date_t>(vec)[row] = date_t(val - STATA_EPOCH_OFFSET);
 					} else {
-						FlatVector::GetData<int32_t>(vec)[row] = val;
+						FlatVector::GetDataMutable<int32_t>(vec)[row] = val;
 					}
 					break;
 				}
@@ -416,13 +414,13 @@ static void ReadDtaScan(ClientContext &context, TableFunctionInput &data, DataCh
 						}
 					} else if (type.id() == LogicalTypeId::DATE) {
 						if (FitsInInt32(val)) {
-							FlatVector::GetData<date_t>(vec)[row] =
+							FlatVector::GetDataMutable<date_t>(vec)[row] =
 							    date_t(static_cast<int32_t>(val) - STATA_EPOCH_OFFSET);
 						} else {
 							FlatVector::SetNull(vec, row, true);
 						}
 					} else {
-						FlatVector::GetData<float>(vec)[row] = val;
+						FlatVector::GetDataMutable<float>(vec)[row] = val;
 					}
 					break;
 				}
@@ -440,13 +438,13 @@ static void ReadDtaScan(ClientContext &context, TableFunctionInput &data, DataCh
 						}
 					} else if (type.id() == LogicalTypeId::DATE) {
 						int32_t stata_days = static_cast<int32_t>(val);
-						FlatVector::GetData<date_t>(vec)[row] = date_t(stata_days - STATA_EPOCH_OFFSET);
+						FlatVector::GetDataMutable<date_t>(vec)[row] = date_t(stata_days - STATA_EPOCH_OFFSET);
 					} else if (type.id() == LogicalTypeId::TIMESTAMP) {
 						int64_t stata_ms = static_cast<int64_t>(val);
 						int64_t unix_ms = stata_ms - STATA_TC_EPOCH_OFFSET_MS;
-						FlatVector::GetData<timestamp_t>(vec)[row] = timestamp_t(unix_ms * 1000);
+						FlatVector::GetDataMutable<timestamp_t>(vec)[row] = timestamp_t(unix_ms * 1000);
 					} else {
-						FlatVector::GetData<double>(vec)[row] = val;
+						FlatVector::GetDataMutable<double>(vec)[row] = val;
 					}
 					break;
 				}
@@ -476,7 +474,7 @@ static void ReadDtaScan(ClientContext &context, TableFunctionInput &data, DataCh
 						FlatVector::SetNull(vec, row, true);
 					} else {
 						auto &str = reader.ResolveStrL(static_cast<uint32_t>(v_ref), o_ref);
-						FlatVector::GetData<string_t>(vec)[row] = StringVector::AddString(vec, str);
+						FlatVector::GetDataMutable<string_t>(vec)[row] = StringVector::AddString(vec, str);
 					}
 					break;
 				}
@@ -487,9 +485,9 @@ static void ReadDtaScan(ClientContext &context, TableFunctionInput &data, DataCh
 						size_t len = strnlen(row_ptr, col_def.byte_width);
 						if (latin1 && dta::NeedsUtf8Transcode(row_ptr, len)) {
 							auto utf8 = dta::Latin1ToUtf8(row_ptr, len);
-							FlatVector::GetData<string_t>(vec)[row] = StringVector::AddString(vec, utf8);
+							FlatVector::GetDataMutable<string_t>(vec)[row] = StringVector::AddString(vec, utf8);
 						} else {
-							FlatVector::GetData<string_t>(vec)[row] = StringVector::AddString(vec, row_ptr, len);
+							FlatVector::GetDataMutable<string_t>(vec)[row] = StringVector::AddString(vec, row_ptr, len);
 						}
 					} else {
 						FlatVector::SetNull(vec, row, true);
@@ -500,7 +498,7 @@ static void ReadDtaScan(ClientContext &context, TableFunctionInput &data, DataCh
 			}
 		}
 
-		output.SetCardinality(actual);
+		output.SetChildCardinality(actual);
 
 		// Apply pushed-down filters; on an empty result claim the next range
 		// instead of returning (an empty chunk would end the scan)
@@ -520,7 +518,7 @@ static void ReadDtaScan(ClientContext &context, TableFunctionInput &data, DataCh
 
 TableFunction GetReadDtaFunction() {
 	TableFunction func("read_dta", {LogicalType::VARCHAR}, ReadDtaScan, ReadDtaBind, ReadDtaInit, ReadDtaInitLocal);
-	func.named_parameters["value_labels"] = LogicalType::BOOLEAN;
+	func.GetSignature().AddKeywordOnly("value_labels", LogicalType::BOOLEAN, Value::BOOLEAN(false));
 	func.projection_pushdown = true;
 	func.filter_pushdown = true;
 	func.get_partition_data = ReadDtaGetPartitionData;

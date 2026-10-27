@@ -1,7 +1,7 @@
 extension:
   name: dta
-  description: Read and write Stata .dta files (formats 117-121, Stata 13-18) with full type mapping, value labels, and strL support.
-  version: 0.1.1
+  description: Read and write Stata .dta files (read formats 113-121, Stata 8-18; write format 119) with full type mapping, value labels, and strL support.
+  version: 0.1.2
   language: C++
   build: cmake
   license: MIT
@@ -31,7 +31,7 @@ docs:
 
   extended_description: |
     The dta extension enables DuckDB to **read and write Stata .dta files** natively,
-    supporting formats 117 through 121 (Stata 13--18).
+    reading formats 113 through 121 (Stata 8--18) and writing format 119 (Stata 15).
 
     **Reading:**
     - Reads all standard Stata types: byte, int, long, float, double, fixed-length strings, and strL

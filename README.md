@@ -1,6 +1,6 @@
 # dta: A DuckDB Extension for Reading and Writing Stata Files
 
-A [DuckDB](https://duckdb.org/) extension for reading and writing Stata `.dta` files (formats 117--121, corresponding to Stata 13--18).
+A [DuckDB](https://duckdb.org/) extension for reading and writing Stata `.dta` files (reading formats 113--121, corresponding to Stata 8--18; writing format 119, Stata 15).
 
 ## Installation
 

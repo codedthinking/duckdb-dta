@@ -187,15 +187,15 @@ static dta::DtaWriteColumn MapDuckDBType(const string &name, const LogicalType &
 // ─── Bind ───────────────────────────────────────────────────────────────────
 
 static unique_ptr<FunctionData> WriteDtaBind(ClientContext &context, CopyFunctionBindInput &input,
-                                             const vector<string> &names, const vector<LogicalType> &sql_types) {
+                                             const vector<Identifier> &names, const vector<LogicalType> &sql_types) {
 	auto result = make_uniq<WriteDtaBindData>();
 
 	for (idx_t i = 0; i < names.size(); i++) {
-		auto col = MapDuckDBType(names[i], sql_types[i]);
+		auto col = MapDuckDBType(names[i].GetIdentifierName(), sql_types[i]);
 
 		// Handle ENUM: create value label
 		if (sql_types[i].id() == LogicalTypeId::ENUM) {
-			string label_name = names[i];
+			string label_name = names[i].GetIdentifierName();
 			col.value_label_name = label_name;
 
 			dta::WriterValueLabel vl;
